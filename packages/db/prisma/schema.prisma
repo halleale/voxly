@@ -1,0 +1,327 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector, pgcrypto]
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum SourceType {
+  SLACK
+  INTERCOM
+  ZENDESK
+  G2
+  TRUSTRADIUS
+  GONG
+  CANNY
+  HN
+  REDDIT
+  HUBSPOT
+  SALESFORCE
+  API
+}
+
+enum ConnectorStatus {
+  ACTIVE
+  ERROR
+  PAUSED
+  PENDING_AUTH
+}
+
+enum IngestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  UNCERTAIN
+}
+
+enum Severity {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum FeedbackStatus {
+  NEW
+  ASSIGNED
+  RESOLVED
+  ARCHIVED
+}
+
+enum CustomerTier {
+  ENTERPRISE
+  GROWTH
+  STARTER
+}
+
+enum TicketProvider {
+  LINEAR
+  JIRA
+}
+
+enum WorkflowRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model Workspace {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String   @unique
+  plan       String   @default("starter")
+  /// Hashed API key for the public ingestion endpoint (Chunk 10)
+  apiKeyHash String?  @map("api_key_hash")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  members       WorkspaceMember[]
+  connectors    Connector[]
+  feedbackItems FeedbackItem[]
+  customers     Customer[]
+  themes        Theme[]
+  views         View[]
+  workflows     Workflow[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String     @id @default(cuid())
+  workspaceId String     @map("workspace_id")
+  clerkUserId String     @map("clerk_user_id")
+  email       String
+  name        String?
+  role        MemberRole @default(MEMBER)
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignedItems FeedbackItem[]
+
+  @@unique([workspaceId, clerkUserId])
+  @@index([workspaceId])
+  @@map("workspace_members")
+}
+
+model Connector {
+  id           String          @id @default(cuid())
+  workspaceId  String          @map("workspace_id")
+  type         SourceType
+  name         String
+  /// OAuth tokens and settings — encrypted at the application layer before write
+  configJson   Json            @default("{}") @map("config_json")
+  enabled      Boolean         @default(true)
+  status       ConnectorStatus @default(PENDING_AUTH)
+  lastPolledAt DateTime?       @map("last_polled_at")
+  itemCount    Int             @default(0) @map("item_count")
+  errorMessage String?         @map("error_message")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  ingestionQueue IngestionQueue[]
+  feedbackItems  FeedbackItem[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, type])
+  @@map("connectors")
+}
+
+model IngestionQueue {
+  id           String          @id @default(cuid())
+  connectorId  String          @map("connector_id")
+  externalId   String          @map("external_id")
+  rawPayload   Json            @map("raw_payload")
+  sourceType   SourceType      @map("source_type")
+  receivedAt   DateTime        @default(now()) @map("received_at")
+  status       IngestionStatus @default(PENDING)
+  rejectReason String?         @map("reject_reason")
+  processedAt  DateTime?       @map("processed_at")
+
+  connector Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+
+  @@unique([connectorId, externalId])
+  @@index([connectorId, status])
+  @@index([status, receivedAt])
+  @@map("ingestion_queue")
+}
+
+model FeedbackItem {
+  id               String         @id @default(cuid())
+  workspaceId      String         @map("workspace_id")
+  connectorId      String         @map("connector_id")
+  verbatimText     String         @map("verbatim_text")
+  extractedSummary String?        @map("extracted_summary")
+  authorName       String?        @map("author_name")
+  authorEmail      String?        @map("author_email")
+  authorUrl        String?        @map("author_url")
+  sourceType       SourceType     @map("source_type")
+  externalId       String?        @map("external_id")
+  externalUrl      String?        @map("external_url")
+  /// Primary theme — shown in table
+  themeId          String?        @map("theme_id")
+  /// Secondary themes — shown in detail panel only
+  secondaryThemeIds String[]      @default([]) @map("secondary_theme_ids")
+  themeConfidence  Float?         @map("theme_confidence")
+  /// Sentiment score: -1.0 (negative) to +1.0 (positive)
+  sentiment        Float?
+  severity         Severity?
+  status           FeedbackStatus @default(NEW)
+  /// References WorkspaceMember.id
+  assigneeId       String?        @map("assignee_id")
+  customerId       String?        @map("customer_id")
+  publishedAt      DateTime?      @map("published_at")
+  ingestedAt       DateTime       @default(now()) @map("ingested_at")
+  relevanceScore   Float?         @map("relevance_score")
+  rawPayload       Json?          @map("raw_payload")
+  /// Embedding vector — written via raw SQL ($executeRaw with pgvector)
+  /// Type omitted from Prisma model; column created by migration SQL
+
+  workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connector     Connector        @relation(fields: [connectorId], references: [id])
+  theme         Theme?           @relation(fields: [themeId], references: [id])
+  customer      Customer?        @relation(fields: [customerId], references: [id])
+  assignee      WorkspaceMember? @relation(fields: [assigneeId], references: [id])
+  linkedTickets LinkedTicket[]
+  workflowRuns  WorkflowRun[]
+
+  @@index([workspaceId, ingestedAt(sort: Desc)])
+  @@index([workspaceId, themeId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, sentiment])
+  @@index([workspaceId, customerId])
+  @@index([workspaceId, sourceType])
+  @@map("feedback_items")
+}
+
+model Customer {
+  id          String       @id @default(cuid())
+  workspaceId String       @map("workspace_id")
+  name        String
+  domain      String?
+  tier        CustomerTier @default(STARTER)
+  /// ARR in cents — avoids floating point currency bugs
+  arrCents    Int?         @map("arr_cents")
+  crmId       String?      @map("crm_id")
+  enrichedAt  DateTime?    @map("enriched_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  feedbackItems FeedbackItem[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, tier])
+  @@map("customers")
+}
+
+model Theme {
+  id           String    @id @default(cuid())
+  workspaceId  String    @map("workspace_id")
+  slug         String
+  name         String
+  description  String?
+  itemCount    Int       @default(0) @map("item_count")
+  /// Proto-themes await the nightly HDBSCAN run before receiving a real name
+  isProto      Boolean   @default(false) @map("is_proto")
+  isSpiking    Boolean   @default(false) @map("is_spiking")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  lastActiveAt DateTime? @map("last_active_at")
+  /// Centroid vector — written via raw SQL ($executeRaw with pgvector)
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  feedbackItems FeedbackItem[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@map("themes")
+}
+
+model View {
+  id          String   @id @default(cuid())
+  workspaceId String   @map("workspace_id")
+  name        String
+  color       String?
+  /// Serialised FilterSet — versioned schema defined in @voxly/types
+  filtersJson Json     @default("{}") @map("filters_json")
+  sortJson    Json?    @map("sort_json")
+  isSystem    Boolean  @default(false) @map("is_system")
+  position    Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, position])
+  @@map("views")
+}
+
+model LinkedTicket {
+  id             String         @id @default(cuid())
+  workspaceId    String         @map("workspace_id")
+  feedbackItemId String         @map("feedback_item_id")
+  provider       TicketProvider
+  ticketId       String         @map("ticket_id")
+  ticketUrl      String         @map("ticket_url")
+  ticketTitle    String?        @map("ticket_title")
+  ticketStatus   String?        @map("ticket_status")
+  syncedAt       DateTime?      @map("synced_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  feedbackItem FeedbackItem @relation(fields: [feedbackItemId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([feedbackItemId])
+  @@map("linked_tickets")
+}
+
+model Workflow {
+  id          String    @id @default(cuid())
+  workspaceId String    @map("workspace_id")
+  name        String
+  isActive    Boolean   @default(false) @map("is_active")
+  /// WorkflowGraph — versioned schema defined in @voxly/types
+  graphJson   Json      @default("{}") @map("graph_json")
+  lastRunAt   DateTime? @map("last_run_at")
+  runCount    Int       @default(0) @map("run_count")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  runs      WorkflowRun[]
+
+  @@index([workspaceId])
+  @@map("workflows")
+}
+
+model WorkflowRun {
+  id             String            @id @default(cuid())
+  workflowId     String            @map("workflow_id")
+  feedbackItemId String?           @map("feedback_item_id")
+  status         WorkflowRunStatus @default(RUNNING)
+  startedAt      DateTime          @default(now()) @map("started_at")
+  completedAt    DateTime?         @map("completed_at")
+  /// Per-node result log
+  stepsJson      Json?             @map("steps_json")
+
+  workflow     Workflow      @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  feedbackItem FeedbackItem? @relation(fields: [feedbackItemId], references: [id])
+
+  @@index([workflowId])
+  @@index([feedbackItemId])
+  @@map("workflow_runs")
+}
