@@ -15,7 +15,10 @@
     "@clerk/fastify": "^2.0.0",
     "fastify-plugin": "^5.0.1",
     "@voxly/db": "workspace:*",
-    "@voxly/types": "workspace:*"
+    "@voxly/queue": "workspace:*",
+    "@voxly/types": "workspace:*",
+    "bullmq": "^5.34.2",
+    "ioredis": "^5.4.2"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

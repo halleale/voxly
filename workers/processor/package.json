@@ -9,9 +9,13 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@voxly/ai": "workspace:*",
+    "@voxly/connectors": "workspace:*",
     "@voxly/db": "workspace:*",
     "@voxly/queue": "workspace:*",
-    "@voxly/types": "workspace:*"
+    "@voxly/types": "workspace:*",
+    "bullmq": "^5.34.2",
+    "ioredis": "^5.4.2"
   },
   "devDependencies": {
     "tsx": "^4.19.2",
