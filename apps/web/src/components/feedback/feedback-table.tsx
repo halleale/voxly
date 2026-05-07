@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import {
   useReactTable,
   getCoreRowModel,
@@ -9,32 +9,75 @@ import {
   flexRender,
   type SortingState,
   type RowSelectionState,
-  type ColumnFiltersState,
   type VisibilityState,
 } from "@tanstack/react-table"
 import { feedbackColumns, type FeedbackRow } from "./columns"
+import { DetailPanel } from "./detail-panel"
+import { FilterPanel, type FilterState } from "./filter-panel"
 import { cn } from "@/lib/utils"
-import { ArrowUp, ArrowDown, ChevronsUpDown, Trash2, UserCheck, Archive } from "lucide-react"
+import { ArrowUp, ArrowDown, ChevronsUpDown, Trash2, UserCheck, Archive, SlidersHorizontal, Columns3 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 interface FeedbackTableProps {
   data: FeedbackRow[]
-  onRowClick?: (row: FeedbackRow) => void
 }
 
-export function FeedbackTable({ data, onRowClick }: FeedbackTableProps) {
+const EMPTY_FILTERS: FilterState = {
+  sourceTypes: [],
+  severities: [],
+  statuses: [],
+  sentimentRange: null,
+  customerTiers: [],
+}
+
+function applyFilters(rows: FeedbackRow[], filters: FilterState): FeedbackRow[] {
+  return rows.filter((row) => {
+    if (filters.sourceTypes.length > 0 && !filters.sourceTypes.includes(row.sourceType as string)) return false
+    if (filters.severities.length > 0 && !filters.severities.includes(row.severity as string)) return false
+    if (filters.statuses.length > 0 && !filters.statuses.includes(row.status as string)) return false
+    if (filters.customerTiers.length > 0) {
+      if (!row.customer || !filters.customerTiers.includes(row.customer.tier as string)) return false
+    }
+    if (filters.sentimentRange) {
+      const s = row.sentiment as number | null
+      if (s == null) return false
+      if (filters.sentimentRange === "positive" && s <= 0.3) return false
+      if (filters.sentimentRange === "negative" && s >= -0.3) return false
+      if (filters.sentimentRange === "neutral" && (s < -0.3 || s > 0.3)) return false
+    }
+    return true
+  })
+}
+
+const COLUMN_LABELS: Record<string, string> = {
+  select: "Select",
+  customer: "Customer",
+  theme: "Theme",
+  feedback: "Feedback",
+  source: "Source",
+  sentiment: "Sentiment",
+  severity: "Severity",
+  status: "Status",
+  age: "Age",
+}
+
+export function FeedbackTable({ data }: FeedbackTableProps) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "age", desc: false }])
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
+  const [selectedItem, setSelectedItem] = useState<FeedbackRow | null>(null)
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [colMenuOpen, setColMenuOpen] = useState(false)
+  const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS)
+
+  const filteredData = useMemo(() => applyFilters(data, filters), [data, filters])
 
   const table = useReactTable({
-    data,
+    data: filteredData,
     columns: feedbackColumns,
-    state: { sorting, rowSelection, columnFilters, columnVisibility },
+    state: { sorting, rowSelection, columnVisibility },
     onSortingChange: setSorting,
     onRowSelectionChange: setRowSelection,
-    onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -43,103 +86,176 @@ export function FeedbackTable({ data, onRowClick }: FeedbackTableProps) {
   })
 
   const selectedCount = Object.keys(rowSelection).length
+  const activeFilterCount =
+    filters.sourceTypes.length +
+    filters.severities.length +
+    filters.statuses.length +
+    filters.customerTiers.length +
+    (filters.sentimentRange ? 1 : 0)
+  const hasFilters = activeFilterCount > 0
+
+  const toggleableColumns = table.getAllLeafColumns().filter((c) => c.id !== "select")
 
   return (
-    <div className="relative flex flex-col">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">
-            {table.getFilteredRowModel().rows.length} items
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm">
-            + Filter
-          </Button>
-          <Button variant="outline" size="sm">
-            Columns
-          </Button>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="overflow-auto">
-        <table className="feedback-table w-full border-collapse">
-          <thead className="border-b border-border bg-muted/30 sticky top-0 z-10">
-            {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id}>
-                {hg.headers.map((header) => {
-                  const canSort = header.column.getCanSort()
-                  const sorted = header.column.getIsSorted()
-                  return (
-                    <th
-                      key={header.id}
-                      style={{ width: header.getSize() }}
-                      onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
-                      className={cn(canSort && "cursor-pointer select-none")}
-                    >
-                      <div className="flex items-center gap-1">
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {canSort && (
-                          <span className="ml-1 text-muted-foreground/50">
-                            {sorted === "asc"  ? <ArrowUp className="h-3 w-3" />    :
-                             sorted === "desc" ? <ArrowDown className="h-3 w-3" />  :
-                                                 <ChevronsUpDown className="h-3 w-3" />}
-                          </span>
-                        )}
-                      </div>
-                    </th>
-                  )
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr
-                key={row.id}
-                onClick={() => onRowClick?.(row.original)}
-                data-selected={row.getIsSelected()}
-                className={cn(row.getIsSelected() && "bg-primary/5")}
+    <>
+      <div className="relative flex flex-col">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              {table.getRowModel().rows.length} items
+            </span>
+            {hasFilters && (
+              <button
+                onClick={() => setFilters(EMPTY_FILTERS)}
+                className="text-xs text-primary hover:underline"
               >
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} style={{ width: cell.column.getSize() }}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            ))}
-            {table.getRowModel().rows.length === 0 && (
-              <tr>
-                <td colSpan={feedbackColumns.length} className="py-16 text-center text-sm text-muted-foreground">
-                  No feedback items found.
-                </td>
-              </tr>
+                Clear filters
+              </button>
             )}
-          </tbody>
-        </table>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Filter button */}
+            <div className="relative">
+              <Button
+                variant={hasFilters ? "default" : "outline"}
+                size="sm"
+                className="gap-1.5"
+                onClick={() => { setFilterOpen((v) => !v); setColMenuOpen(false) }}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Filter
+                {hasFilters && (
+                  <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-foreground/20 px-1 text-[10px] font-bold">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </Button>
+              <FilterPanel
+                open={filterOpen}
+                filters={filters}
+                onChange={setFilters}
+                onClose={() => setFilterOpen(false)}
+              />
+            </div>
+
+            {/* Column visibility */}
+            <div className="relative">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => { setColMenuOpen((v) => !v); setFilterOpen(false) }}
+              >
+                <Columns3 className="h-3.5 w-3.5" />
+                Columns
+              </Button>
+              {colMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setColMenuOpen(false)} />
+                  <div className="absolute right-0 top-full z-40 mt-1 w-44 rounded-xl border border-border bg-card shadow-xl p-2">
+                    {toggleableColumns.map((col) => (
+                      <label
+                        key={col.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={col.getIsVisible()}
+                          onChange={col.getToggleVisibilityHandler()}
+                          className="h-3.5 w-3.5 rounded border-border"
+                        />
+                        {COLUMN_LABELS[col.id] ?? col.id}
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-auto">
+          <table className="feedback-table w-full border-collapse">
+            <thead className="border-b border-border bg-muted/30 sticky top-0 z-10">
+              {table.getHeaderGroups().map((hg) => (
+                <tr key={hg.id}>
+                  {hg.headers.map((header) => {
+                    const canSort = header.column.getCanSort()
+                    const sorted = header.column.getIsSorted()
+                    return (
+                      <th
+                        key={header.id}
+                        style={{ width: header.getSize() }}
+                        onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+                        className={cn(canSort && "cursor-pointer select-none")}
+                      >
+                        <div className="flex items-center gap-1">
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {canSort && (
+                            <span className="ml-1 text-muted-foreground/50">
+                              {sorted === "asc"  ? <ArrowUp className="h-3 w-3" />    :
+                               sorted === "desc" ? <ArrowDown className="h-3 w-3" />  :
+                                                   <ChevronsUpDown className="h-3 w-3" />}
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                    )
+                  })}
+                </tr>
+              ))}
+            </thead>
+            <tbody>
+              {table.getRowModel().rows.map((row) => (
+                <tr
+                  key={row.id}
+                  onClick={() => setSelectedItem(row.original)}
+                  data-selected={row.getIsSelected()}
+                  className={cn(row.getIsSelected() && "bg-primary/5")}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id} style={{ width: cell.column.getSize() }}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {table.getRowModel().rows.length === 0 && (
+                <tr>
+                  <td colSpan={feedbackColumns.length} className="py-16 text-center text-sm text-muted-foreground">
+                    No feedback items found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Bulk action bar */}
+        {selectedCount > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-3 shadow-lg">
+            <span className="text-sm font-medium">{selectedCount} selected</span>
+            <div className="h-4 w-px bg-border" />
+            <Button variant="ghost" size="sm" className="gap-1.5">
+              <UserCheck className="h-4 w-4" /> Assign
+            </Button>
+            <Button variant="ghost" size="sm" className="gap-1.5">
+              <Archive className="h-4 w-4" /> Archive
+            </Button>
+            <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive">
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setRowSelection({})}>
+              Cancel
+            </Button>
+          </div>
+        )}
       </div>
 
-      {/* Bulk action bar */}
-      {selectedCount > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-3 shadow-lg">
-          <span className="text-sm font-medium">{selectedCount} selected</span>
-          <div className="h-4 w-px bg-border" />
-          <Button variant="ghost" size="sm" className="gap-1.5">
-            <UserCheck className="h-4 w-4" /> Assign
-          </Button>
-          <Button variant="ghost" size="sm" className="gap-1.5">
-            <Archive className="h-4 w-4" /> Archive
-          </Button>
-          <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive">
-            <Trash2 className="h-4 w-4" /> Delete
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setRowSelection({})}>
-            Cancel
-          </Button>
-        </div>
-      )}
-    </div>
+      {/* Detail Panel */}
+      <DetailPanel item={selectedItem} onClose={() => setSelectedItem(null)} />
+    </>
   )
 }

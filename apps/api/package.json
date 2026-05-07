@@ -15,7 +15,9 @@
     "@clerk/fastify": "^2.0.0",
     "fastify-plugin": "^5.0.1",
     "@voxly/db": "workspace:*",
-    "@voxly/types": "workspace:*"
+    "@voxly/types": "workspace:*",
+    "@voxly/queue": "workspace:*",
+    "@voxly/connectors": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2",
