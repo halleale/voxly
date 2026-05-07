@@ -43,6 +43,7 @@ async function getFeedbackData(workspaceId: string, where: Record<string, unknow
       theme: true,
       assignee: true,
       connector: true,
+      linkedTickets: true,
     },
     orderBy: { ingestedAt: "desc" },
     take: 200,
@@ -76,9 +77,17 @@ export default async function FeedbackPage({ searchParams }: PageProps) {
   const member = await prisma.workspaceMember.findFirst({ where: { clerkUserId: userId } })
   if (!member) redirect("/sign-in")
 
-  const [feedbackData, counts] = await Promise.all([
+  const [feedbackData, counts, members, linearConnector] = await Promise.all([
     getFeedbackData(member.workspaceId, getViewWhere(view)),
     getViewCounts(member.workspaceId),
+    prisma.workspaceMember.findMany({
+      where: { workspaceId: member.workspaceId },
+      select: { id: true, name: true, email: true },
+    }),
+    prisma.connector.findFirst({
+      where: { workspaceId: member.workspaceId, type: "LINEAR", enabled: true },
+      select: { id: true },
+    }),
   ])
 
   const countMap: Record<string, number> = {
@@ -89,6 +98,8 @@ export default async function FeedbackPage({ searchParams }: PageProps) {
     unassigned: counts.unassigned,
     negative:   counts.negative,
   }
+
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -119,7 +130,13 @@ export default async function FeedbackPage({ searchParams }: PageProps) {
 
       {/* Table — client component receives server-fetched data */}
       <div className="flex-1 overflow-auto">
-        <FeedbackTable data={feedbackData} />
+        <FeedbackTable
+          data={feedbackData}
+          workspaceId={member.workspaceId}
+          members={members}
+          apiBase={apiBase}
+          hasLinear={!!linearConnector}
+        />
       </div>
     </div>
   )

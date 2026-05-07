@@ -30,6 +30,8 @@ enum SourceType {
   REDDIT
   HUBSPOT
   SALESFORCE
+  LINEAR
+  JIRA
   API
 }
 
@@ -225,6 +227,7 @@ model Customer {
   workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   feedbackItems FeedbackItem[]
 
+  @@unique([workspaceId, domain])
   @@index([workspaceId])
   @@index([workspaceId, tier])
   @@map("customers")

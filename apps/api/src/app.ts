@@ -8,6 +8,8 @@ import feedback from "./routes/feedback"
 import inbox from "./routes/inbox"
 import webhooks from "./routes/webhooks"
 import connectors from "./routes/connectors"
+import themes from "./routes/themes"
+import actions from "./routes/actions"
 
 export async function buildApp() {
   const app = Fastify({
@@ -29,6 +31,8 @@ export async function buildApp() {
   await app.register(inbox)
   await app.register(webhooks)
   await app.register(connectors)
+  await app.register(themes)
+  await app.register(actions)
 
   app.setErrorHandler((err: unknown, _request, reply) => {
     app.log.error(err)

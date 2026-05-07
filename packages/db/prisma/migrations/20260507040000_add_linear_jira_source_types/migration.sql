@@ -1,0 +1,3 @@
+-- Add LINEAR and JIRA to SourceType enum
+ALTER TYPE "SourceType" ADD VALUE IF NOT EXISTS 'LINEAR';
+ALTER TYPE "SourceType" ADD VALUE IF NOT EXISTS 'JIRA';

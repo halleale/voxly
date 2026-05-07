@@ -188,3 +188,81 @@ export function computeCentroid(embeddings: number[][]): number[] {
   const n = embeddings.length
   return centroid.map((v) => (v ?? 0) / n)
 }
+
+// ─── Real-time theme assignment ───────────────────────────────────────────────
+
+export interface ThemeCandidate {
+  id: string
+  centroid: number[]
+}
+
+/**
+ * Find the nearest existing theme for a given embedding.
+ * Returns themeId + confidence, or null if no theme exceeds the threshold.
+ */
+export function findNearestTheme(
+  embedding: number[],
+  themes: ThemeCandidate[],
+  threshold = 0.78,
+): { themeId: string | null; confidence: number } {
+  let bestId: string | null = null
+  let bestScore = -1
+
+  for (const theme of themes) {
+    if (theme.centroid.length === 0) continue
+    const score = cosineSimilarity(embedding, theme.centroid)
+    if (score > bestScore) {
+      bestScore = score
+      bestId = theme.id
+    }
+  }
+
+  if (bestScore >= threshold) return { themeId: bestId, confidence: bestScore }
+  return { themeId: null, confidence: bestScore }
+}
+
+// ─── Theme naming (GPT-4o) ────────────────────────────────────────────────────
+
+export interface ThemeNameResult {
+  name: string
+  slug: string
+  description: string
+}
+
+const THEME_NAME_SYSTEM = `You are naming a product-feedback theme cluster for a PM tool.
+Given 3-10 sample feedback quotes, produce:
+  - name: a 2-5 word human-readable label (Title Case)
+  - slug: kebab-case version of the name (no special chars, max 40 chars)
+  - description: one sentence describing the common pattern in the feedback (max 80 words)
+
+Respond with valid JSON only: {"name":"...","slug":"...","description":"..."}`
+
+export async function nameTheme(samples: string[]): Promise<ThemeNameResult> {
+  const joined = samples
+    .slice(0, 8)
+    .map((s, i) => `${i + 1}. "${s.slice(0, 200)}"`)
+    .join("\n")
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: THEME_NAME_SYSTEM },
+      { role: "user", content: joined },
+    ],
+    temperature: 0.2,
+    max_tokens: 150,
+    response_format: { type: "json_object" },
+  })
+
+  const raw = response.choices[0]?.message.content ?? "{}"
+  try {
+    const parsed = JSON.parse(raw) as Partial<ThemeNameResult>
+    return {
+      name: parsed.name ?? "Untitled Theme",
+      slug: (parsed.slug ?? "untitled-theme").toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 40),
+      description: parsed.description ?? "",
+    }
+  } catch {
+    return { name: "Untitled Theme", slug: "untitled-theme", description: "" }
+  }
+}

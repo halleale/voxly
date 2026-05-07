@@ -1,14 +1,25 @@
 "use client"
 
-import { X, ExternalLink, Hash, User, Tag, Zap, Clock, Link2 } from "lucide-react"
+import { useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import {
+  X, ExternalLink, Hash, User, Tag, Zap, Clock, Link2,
+  CheckCircle2, Archive, ChevronDown, Loader2,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatAge, formatArr, formatSentiment, cn } from "@/lib/utils"
 import type { FeedbackRow } from "./columns"
 
+interface Member { id: string; name: string | null; email: string }
+
 interface DetailPanelProps {
   item: FeedbackRow | null
   onClose: () => void
+  workspaceId: string
+  members: Member[]
+  apiBase: string
+  hasLinear: boolean
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -31,10 +42,9 @@ function MetaRow({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
-export function DetailPanel({ item, onClose }: DetailPanelProps) {
+export function DetailPanel({ item, onClose, workspaceId, members, apiBase, hasLinear }: DetailPanelProps) {
   return (
     <>
-      {/* Backdrop */}
       <div
         className={cn(
           "fixed inset-0 z-40 bg-background/60 backdrop-blur-sm transition-opacity duration-200",
@@ -42,26 +52,108 @@ export function DetailPanel({ item, onClose }: DetailPanelProps) {
         )}
         onClick={onClose}
       />
-
-      {/* Panel */}
       <div
         className={cn(
           "fixed right-0 top-0 z-50 flex h-full w-[480px] flex-col bg-card border-l border-border shadow-2xl transition-transform duration-200 ease-out",
           item ? "translate-x-0" : "translate-x-full",
         )}
       >
-        {item && <PanelContent item={item} onClose={onClose} />}
+        {item && (
+          <PanelContent
+            item={item}
+            onClose={onClose}
+            workspaceId={workspaceId}
+            members={members}
+            apiBase={apiBase}
+            hasLinear={hasLinear}
+          />
+        )}
       </div>
     </>
   )
 }
 
-function PanelContent({ item, onClose }: { item: FeedbackRow; onClose: () => void }) {
+function PanelContent({
+  item,
+  onClose,
+  workspaceId,
+  members,
+  apiBase,
+  hasLinear,
+}: {
+  item: FeedbackRow
+  onClose: () => void
+  workspaceId: string
+  members: Member[]
+  apiBase: string
+  hasLinear: boolean
+}) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [ticketOpen, setTicketOpen] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+
   const sentiment = item.sentiment as number | null
   const sentimentColor =
     sentiment == null ? "text-muted-foreground" :
     sentiment > 0.3   ? "text-green-600" :
     sentiment < -0.3  ? "text-red-500"   : "text-amber-500"
+
+  async function callApi(path: string, body: object) {
+    setActionError(null)
+    const res = await fetch(`${apiBase}/api/workspaces/${workspaceId}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Unknown error" }))
+      throw new Error((err as { error?: string }).error ?? "Request failed")
+    }
+    return res.json()
+  }
+
+  function refresh() {
+    startTransition(() => router.refresh())
+  }
+
+  async function handleAssign(assigneeId: string | null) {
+    setAssignOpen(false)
+    try {
+      await callApi(`/feedback/${item.id}/assign`, { assigneeId })
+      refresh()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function handleStatus(status: string) {
+    try {
+      await callApi(`/feedback/${item.id}/status`, { status })
+      refresh()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function handleCreateTicket() {
+    setTicketOpen(false)
+    try {
+      await callApi(`/feedback/${item.id}/create-ticket`, { provider: "LINEAR" })
+      refresh()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const linkedTicket = item.linkedTickets?.[0]
+  const ticketStatus = (linkedTicket?.ticketStatus ?? "").toLowerCase()
+  const ticketDotColor =
+    ticketStatus === "done" || ticketStatus === "completed" ? "bg-green-500" :
+    ticketStatus === "in progress" || ticketStatus === "started" ? "bg-blue-500" :
+    "bg-amber-400"
 
   return (
     <>
@@ -76,6 +168,7 @@ function PanelContent({ item, onClose }: { item: FeedbackRow; onClose: () => voi
               {(item.severity as string).charAt(0) + (item.severity as string).slice(1).toLowerCase()}
             </Badge>
           )}
+          {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
         <button
           onClick={onClose}
@@ -85,6 +178,12 @@ function PanelContent({ item, onClose }: { item: FeedbackRow; onClose: () => voi
           <X className="h-4 w-4" />
         </button>
       </div>
+
+      {actionError && (
+        <div className="mx-5 mt-3 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {actionError}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto">
         {/* AI Summary Card */}
@@ -190,7 +289,18 @@ function PanelContent({ item, onClose }: { item: FeedbackRow; onClose: () => voi
               ) : <span className="text-muted-foreground font-normal">—</span>}
             </MetaRow>
             <MetaRow label="Linked issue">
-              <span className="text-muted-foreground font-normal">—</span>
+              {linkedTicket ? (
+                <a
+                  href={linkedTicket.ticketUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 hover:text-primary"
+                >
+                  <span className={cn("h-2 w-2 rounded-full shrink-0", ticketDotColor)} />
+                  <span className="font-mono text-xs">{linkedTicket.ticketTitle?.slice(0, 40) ?? linkedTicket.ticketId}</span>
+                  <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                </a>
+              ) : <span className="text-muted-foreground font-normal">—</span>}
             </MetaRow>
             <MetaRow label="Age">
               <span className="flex items-center gap-1.5 text-muted-foreground font-normal">
@@ -205,17 +315,101 @@ function PanelContent({ item, onClose }: { item: FeedbackRow; onClose: () => voi
         <div className="mx-5 mt-5">
           <p className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
-              <User className="h-3.5 w-3.5" /> Assign
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
-              <Link2 className="h-3.5 w-3.5" /> Create ticket
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+
+            {/* Assign dropdown */}
+            <div className="relative">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => setAssignOpen((v) => !v)}
+                disabled={isPending}
+              >
+                <User className="h-3.5 w-3.5" /> Assign <ChevronDown className="h-3 w-3 ml-0.5" />
+              </Button>
+              {assignOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setAssignOpen(false)} />
+                  <div className="absolute left-0 top-full z-40 mt-1 w-52 rounded-lg border border-border bg-card shadow-xl overflow-hidden">
+                    <button
+                      className="w-full px-3 py-2 text-left text-xs hover:bg-muted text-muted-foreground"
+                      onClick={() => handleAssign(null)}
+                    >
+                      Unassign
+                    </button>
+                    {members.map((m) => (
+                      <button
+                        key={m.id}
+                        className="w-full px-3 py-2 text-left text-xs hover:bg-muted"
+                        onClick={() => handleAssign(m.id)}
+                      >
+                        {m.name ?? m.email}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Create Linear ticket */}
+            {hasLinear && !linkedTicket && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={handleCreateTicket}
+                disabled={isPending}
+              >
+                <Link2 className="h-3.5 w-3.5" /> Create ticket
+              </Button>
+            )}
+
+            {/* Status transitions */}
+            {item.status !== "RESOLVED" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => handleStatus("RESOLVED")}
+                disabled={isPending}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" /> Resolve
+              </Button>
+            )}
+
+            {item.status !== "ARCHIVED" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs text-muted-foreground"
+                onClick={() => handleStatus("ARCHIVED")}
+                disabled={isPending}
+              >
+                <Archive className="h-3.5 w-3.5" /> Archive
+              </Button>
+            )}
+
+            {item.status === "ARCHIVED" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => handleStatus("NEW")}
+                disabled={isPending}
+              >
+                Restore
+              </Button>
+            )}
+
+            {/* Merge into theme placeholder */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs"
+              disabled
+              title="Merge into theme (available in Themes page)"
+            >
               <Tag className="h-3.5 w-3.5" /> Merge into theme
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 text-xs text-muted-foreground">
-              Archive
             </Button>
           </div>
         </div>

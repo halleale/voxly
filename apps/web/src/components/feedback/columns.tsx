@@ -1,12 +1,12 @@
 "use client"
 
 import { createColumnHelper } from "@tanstack/react-table"
-import type { FeedbackItem, Customer, Theme, WorkspaceMember, Connector } from "@voxly/db"
+import type { FeedbackItem, Customer, Theme, WorkspaceMember, Connector, LinkedTicket } from "@voxly/db"
 import { Badge } from "@/components/ui/badge"
 import { formatAge, formatArr, formatSentiment, cn } from "@/lib/utils"
 import {
   Slack, MessageCircle, Star, HelpCircle, Headphones,
-  Hash, MessageSquare,
+  Hash, MessageSquare, ExternalLink,
 } from "lucide-react"
 
 export type FeedbackRow = FeedbackItem & {
@@ -14,6 +14,7 @@ export type FeedbackRow = FeedbackItem & {
   theme: Theme | null
   assignee: WorkspaceMember | null
   connector: Connector
+  linkedTickets: LinkedTicket[]
 }
 
 const col = createColumnHelper<FeedbackRow>()
@@ -191,5 +192,34 @@ export const feedbackColumns = [
       </span>
     ),
     size: 60,
+  }),
+
+  col.accessor("linkedTickets", {
+    id: "ticket",
+    header: "Ticket",
+    cell: ({ getValue }) => {
+      const tickets = getValue()
+      if (!tickets?.length) return <span className="text-muted-foreground text-xs">—</span>
+      const ticket = tickets[0]!
+      const status = (ticket.ticketStatus ?? "").toLowerCase()
+      const dotColor =
+        status === "done" || status === "completed" ? "bg-green-500" :
+        status === "in progress" || status === "started" ? "bg-blue-500" :
+        status === "cancelled" ? "bg-muted-foreground" : "bg-amber-400"
+      return (
+        <a
+          href={ticket.ticketUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center gap-1.5 text-xs font-medium text-foreground hover:text-primary"
+        >
+          <span className={cn("h-2 w-2 rounded-full shrink-0", dotColor)} />
+          <ExternalLink className="h-3 w-3 text-muted-foreground" />
+        </a>
+      )
+    },
+    size: 70,
+    enableSorting: false,
   }),
 ]

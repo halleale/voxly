@@ -12,6 +12,8 @@ export enum SourceType {
   REDDIT = "REDDIT",
   HUBSPOT = "HUBSPOT",
   SALESFORCE = "SALESFORCE",
+  LINEAR = "LINEAR",
+  JIRA = "JIRA",
   API = "API",
 }
 
