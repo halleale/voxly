@@ -87,6 +87,11 @@ model Workspace {
   plan       String   @default("starter")
   /// Hashed API key for the public ingestion endpoint (Chunk 10)
   apiKeyHash String?  @map("api_key_hash")
+  /// Brand profile — used to drive keyword search on public sources (HN, Reddit, G2, etc.)
+  brandWebsite  String?  @map("brand_website")
+  brandName     String?  @map("brand_name")
+  brandKeywords String[] @default([]) @map("brand_keywords")
+  brandInferredAt DateTime? @map("brand_inferred_at")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
