@@ -1,5 +1,5 @@
-import type { ConnectorConfig, NormalizedFeedback, SourceType } from "@voxly/types"
-import { SourceType as ST } from "@voxly/types"
+import type { ConnectorConfig, NormalizedFeedback } from "@voxly/types"
+import { SourceType } from "@voxly/types"
 import type { ConnectorAdapter } from "./adapter"
 
 // ─── HubSpot API types ────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ export async function fetchHubSpotCompanies(
 // Actual data flow goes through the CRM_SYNC queue job.
 
 export const hubspotConnector: ConnectorAdapter = {
-  type: ST.HUBSPOT as unknown as SourceType,
+  type: SourceType.HUBSPOT,
 
   normalize(_raw: unknown, _config: ConnectorConfig): NormalizedFeedback[] {
     return []

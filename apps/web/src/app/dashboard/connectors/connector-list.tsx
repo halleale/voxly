@@ -3,7 +3,7 @@
 import Link from "next/link"
 import {
   Slack, MessageCircle, HelpCircle, Star, Headphones,
-  MessageSquare, Building2, CheckCircle2, XCircle, Clock, AlertCircle,
+  MessageSquare, Building2, GitBranch, CheckCircle2, XCircle, Clock, AlertCircle,
   Plus,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -19,6 +19,7 @@ const AVAILABLE_CONNECTORS = [
   { type: "SLACK",     label: "Slack",      icon: Slack,         description: "Customer feedback from Slack channels" },
   { type: "INTERCOM",  label: "Intercom",   icon: MessageCircle, description: "Support conversations and tickets" },
   { type: "HUBSPOT",   label: "HubSpot",    icon: Building2,     description: "CRM sync — company ARR and tier data" },
+  { type: "LINEAR",    label: "Linear",     icon: GitBranch,     description: "Create and link issues from feedback" },
   { type: "ZENDESK",   label: "Zendesk",    icon: HelpCircle,    description: "Support tickets and CSAT scores" },
   { type: "G2",        label: "G2",         icon: Star,          description: "G2 product reviews" },
   { type: "GONG",      label: "Gong",       icon: Headphones,    description: "Customer calls and transcripts" },

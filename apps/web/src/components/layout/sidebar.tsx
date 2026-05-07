@@ -13,6 +13,7 @@ import {
   Star,
   Headphones,
   HelpCircle,
+  Building2,
   Zap,
   PlugZap,
 } from "lucide-react"
@@ -22,6 +23,8 @@ import type { Connector } from "@voxly/db"
 const SOURCE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   SLACK:     Slack,
   INTERCOM:  MessageCircle,
+  HUBSPOT:   Building2,
+  LINEAR:    GitBranch,
   G2:        Star,
   ZENDESK:   HelpCircle,
   GONG:      Headphones,

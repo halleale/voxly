@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import {
   useReactTable,
   getCoreRowModel,
@@ -15,11 +16,20 @@ import { feedbackColumns, type FeedbackRow } from "./columns"
 import { DetailPanel } from "./detail-panel"
 import { FilterPanel, type FilterState } from "./filter-panel"
 import { cn } from "@/lib/utils"
-import { ArrowUp, ArrowDown, ChevronsUpDown, Trash2, UserCheck, Archive, SlidersHorizontal, Columns3 } from "lucide-react"
+import {
+  ArrowUp, ArrowDown, ChevronsUpDown, Archive, CheckCircle2,
+  SlidersHorizontal, Columns3, UserCheck, ChevronDown, Loader2,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
+
+interface Member { id: string; name: string | null; email: string }
 
 interface FeedbackTableProps {
   data: FeedbackRow[]
+  workspaceId: string
+  members: Member[]
+  apiBase: string
+  hasLinear: boolean
 }
 
 const EMPTY_FILTERS: FilterState = {
@@ -59,9 +69,12 @@ const COLUMN_LABELS: Record<string, string> = {
   severity: "Severity",
   status: "Status",
   age: "Age",
+  ticket: "Ticket",
 }
 
-export function FeedbackTable({ data }: FeedbackTableProps) {
+export function FeedbackTable({ data, workspaceId, members, apiBase, hasLinear }: FeedbackTableProps) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
   const [sorting, setSorting] = useState<SortingState>([{ id: "age", desc: false }])
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
@@ -69,6 +82,8 @@ export function FeedbackTable({ data }: FeedbackTableProps) {
   const [filterOpen, setFilterOpen] = useState(false)
   const [colMenuOpen, setColMenuOpen] = useState(false)
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS)
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false)
+  const [bulkError, setBulkError] = useState<string | null>(null)
 
   const filteredData = useMemo(() => applyFilters(data, filters), [data, filters])
 
@@ -86,6 +101,10 @@ export function FeedbackTable({ data }: FeedbackTableProps) {
   })
 
   const selectedCount = Object.keys(rowSelection).length
+  const selectedIds = table
+    .getSelectedRowModel()
+    .rows.map((r) => r.original.id)
+
   const activeFilterCount =
     filters.sourceTypes.length +
     filters.severities.length +
@@ -95,6 +114,27 @@ export function FeedbackTable({ data }: FeedbackTableProps) {
   const hasFilters = activeFilterCount > 0
 
   const toggleableColumns = table.getAllLeafColumns().filter((c) => c.id !== "select")
+
+  async function bulkAction(action: "archive" | "resolve" | "assign", assigneeId?: string | null) {
+    setBulkError(null)
+    setBulkAssignOpen(false)
+    try {
+      const res = await fetch(`${apiBase}/api/workspaces/${workspaceId}/feedback/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ids: selectedIds, action, assigneeId }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error((err as { error?: string }).error ?? "Request failed")
+      }
+      setRowSelection({})
+      startTransition(() => router.refresh())
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   return (
     <>
@@ -237,16 +277,62 @@ export function FeedbackTable({ data }: FeedbackTableProps) {
         {selectedCount > 0 && (
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-3 shadow-lg">
             <span className="text-sm font-medium">{selectedCount} selected</span>
+            {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+            {bulkError && <span className="text-xs text-destructive">{bulkError}</span>}
             <div className="h-4 w-px bg-border" />
-            <Button variant="ghost" size="sm" className="gap-1.5">
-              <UserCheck className="h-4 w-4" /> Assign
+
+            {/* Bulk assign dropdown */}
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => setBulkAssignOpen((v) => !v)}
+              >
+                <UserCheck className="h-4 w-4" /> Assign <ChevronDown className="h-3 w-3" />
+              </Button>
+              {bulkAssignOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setBulkAssignOpen(false)} />
+                  <div className="absolute bottom-full left-0 z-40 mb-2 w-52 rounded-lg border border-border bg-card shadow-xl overflow-hidden">
+                    <button
+                      className="w-full px-3 py-2 text-left text-xs hover:bg-muted text-muted-foreground"
+                      onClick={() => bulkAction("assign", null)}
+                    >
+                      Unassign
+                    </button>
+                    {members.map((m) => (
+                      <button
+                        key={m.id}
+                        className="w-full px-3 py-2 text-left text-xs hover:bg-muted"
+                        onClick={() => bulkAction("assign", m.id)}
+                      >
+                        {m.name ?? m.email}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => bulkAction("resolve")}
+            >
+              <CheckCircle2 className="h-4 w-4" /> Resolve
             </Button>
-            <Button variant="ghost" size="sm" className="gap-1.5">
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => bulkAction("archive")}
+            >
               <Archive className="h-4 w-4" /> Archive
             </Button>
-            <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive">
-              <Trash2 className="h-4 w-4" /> Delete
-            </Button>
+
             <Button variant="ghost" size="sm" onClick={() => setRowSelection({})}>
               Cancel
             </Button>
@@ -255,7 +341,14 @@ export function FeedbackTable({ data }: FeedbackTableProps) {
       </div>
 
       {/* Detail Panel */}
-      <DetailPanel item={selectedItem} onClose={() => setSelectedItem(null)} />
+      <DetailPanel
+        item={selectedItem}
+        onClose={() => setSelectedItem(null)}
+        workspaceId={workspaceId}
+        members={members}
+        apiBase={apiBase}
+        hasLinear={hasLinear}
+      />
     </>
   )
 }

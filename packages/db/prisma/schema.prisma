@@ -30,6 +30,8 @@ enum SourceType {
   REDDIT
   HUBSPOT
   SALESFORCE
+  LINEAR
+  JIRA
   API
 }
 

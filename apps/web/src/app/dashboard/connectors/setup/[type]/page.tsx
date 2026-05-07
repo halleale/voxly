@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server"
 import { SlackSetup } from "./slack-setup"
 import { IntercomSetup } from "./intercom-setup"
 import { HubSpotSetup } from "./hubspot-setup"
+import { LinearSetup } from "./linear-setup"
 
 const DEV_CLERK_USER_ID = "seed_owner"
 
@@ -31,6 +32,8 @@ export default async function ConnectorSetupPage({ params, searchParams }: PageP
       return <IntercomSetup oauthCode={query.code} oauthError={query.error} />
     case "hubspot":
       return <HubSpotSetup oauthCode={query.code} oauthError={query.error} />
+    case "linear":
+      return <LinearSetup oauthCode={query.code} oauthError={query.error} />
     default:
       notFound()
   }
