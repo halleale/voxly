@@ -11,6 +11,15 @@ export const metadata: Metadata = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Skip ClerkProvider entirely when running without real Clerk keys
+  if (process.env.SKIP_AUTH === "true") {
+    return (
+      <html lang="en" className={inter.variable}>
+        <body className="font-sans">{children}</body>
+      </html>
+    )
+  }
+
   return (
     <ClerkProvider>
       <html lang="en" className={inter.variable}>
