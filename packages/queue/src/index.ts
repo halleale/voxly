@@ -4,17 +4,21 @@ import IORedis from "ioredis"
 // ─── Queue names ──────────────────────────────────────────────────────────────
 
 export const QUEUE_NAMES = {
-  INGESTION:   "ingestion",
-  AI_PIPELINE: "ai-pipeline",
-  POLLING:     "polling",
+  INGESTION:       "ingestion",
+  AI_PIPELINE:     "ai-pipeline",
+  POLLING:         "polling",
+  NIGHTLY_CLUSTER: "nightly-cluster",
+  CRM_SYNC:        "crm-sync",
 } as const
 
 // ─── Job names ────────────────────────────────────────────────────────────────
 
 export const JOB_NAMES = {
-  INGEST_ITEM:  "INGEST_ITEM",
-  PROCESS_ITEM: "PROCESS_ITEM",
-  POLL_SOURCE:  "POLL_SOURCE",
+  INGEST_ITEM:     "INGEST_ITEM",
+  PROCESS_ITEM:    "PROCESS_ITEM",
+  POLL_SOURCE:     "POLL_SOURCE",
+  CLUSTER_THEMES:  "CLUSTER_THEMES",
+  SYNC_CRM:        "SYNC_CRM",
 } as const
 
 // ─── Job payload types ────────────────────────────────────────────────────────
@@ -32,6 +36,15 @@ export interface ProcessItemPayload {
 }
 
 export interface PollSourcePayload {
+  connectorId: string
+  workspaceId: string
+}
+
+export interface ClusterThemesPayload {
+  workspaceId: string
+}
+
+export interface SyncCrmPayload {
   connectorId: string
   workspaceId: string
 }
@@ -56,6 +69,14 @@ export function createAiPipelineQueue(connection: ConnectionOptions) {
 
 export function createPollingQueue(connection: ConnectionOptions) {
   return new Queue<PollSourcePayload>(QUEUE_NAMES.POLLING, { connection })
+}
+
+export function createClusterQueue(connection: ConnectionOptions) {
+  return new Queue<ClusterThemesPayload>(QUEUE_NAMES.NIGHTLY_CLUSTER, { connection })
+}
+
+export function createCrmSyncQueue(connection: ConnectionOptions) {
+  return new Queue<SyncCrmPayload>(QUEUE_NAMES.CRM_SYNC, { connection })
 }
 
 export { Worker, Queue }
