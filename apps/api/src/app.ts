@@ -5,6 +5,7 @@ import authPlugin from "./plugins/auth"
 import dbPlugin from "./plugins/db"
 import health from "./routes/health"
 import feedback from "./routes/feedback"
+import inbox from "./routes/inbox"
 import webhooks from "./routes/webhooks"
 import connectors from "./routes/connectors"
 
@@ -25,6 +26,7 @@ export async function buildApp() {
   await app.register(authPlugin)
   await app.register(health)
   await app.register(feedback)
+  await app.register(inbox)
   await app.register(webhooks)
   await app.register(connectors)
 

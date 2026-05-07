@@ -10,5 +10,5 @@
     "openai": "^4.82.0",
     "@voxly/types": "workspace:*"
   },
-  "devDependencies": { "typescript": "^5.7.2" }
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.7.2" }
 }

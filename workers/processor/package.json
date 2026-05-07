@@ -9,6 +9,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@voxly/ai": "workspace:*",
     "@voxly/db": "workspace:*",
     "@voxly/queue": "workspace:*",
     "@voxly/types": "workspace:*",

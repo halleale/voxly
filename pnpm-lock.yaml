@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
       turbo:
         specifier: ^2.3.3
         version: 2.9.9
@@ -66,6 +69,9 @@ importers:
       '@voxly/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@voxly/queue':
+        specifier: workspace:*
+        version: link:../../packages/queue
       '@voxly/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -125,6 +131,9 @@ importers:
         specifier: ^4.82.0
         version: 4.104.0
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -188,6 +197,9 @@ importers:
 
   workers/processor:
     dependencies:
+      '@voxly/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@voxly/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
