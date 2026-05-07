@@ -15,15 +15,29 @@ const SYSTEM_VIEWS = [
   { id: "negative",     label: "Negative sentiment" },
 ]
 
+function getViewWhere(view: string): Record<string, unknown> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000)
+  const map: Record<string, Record<string, unknown>> = {
+    all:        {},
+    enterprise: { customer: { tier: "ENTERPRISE" }, severity: "HIGH" },
+    untracked:  { themeId: null },
+    last7:      { publishedAt: { gte: sevenDaysAgo } },
+    unassigned: { assigneeId: null, status: "NEW" },
+    negative:   { sentiment: { lt: -0.3 } },
+  }
+  return map[view] ?? {}
+}
+
 async function resolveClerkUserId(): Promise<string | null> {
   if (process.env.SKIP_AUTH === "true") return DEV_CLERK_USER_ID
   const { userId } = await auth()
   return userId
 }
 
-async function getFeedbackData(workspaceId: string): Promise<FeedbackRow[]> {
+async function getFeedbackData(workspaceId: string, where: Record<string, unknown>): Promise<FeedbackRow[]> {
   const repo = createRepo(prisma, workspaceId)
   const items = await repo.feedbackItem.findMany({
+    where,
     include: {
       customer: true,
       theme: true,
@@ -63,7 +77,7 @@ export default async function FeedbackPage({ searchParams }: PageProps) {
   if (!member) redirect("/sign-in")
 
   const [feedbackData, counts] = await Promise.all([
-    getFeedbackData(member.workspaceId),
+    getFeedbackData(member.workspaceId, getViewWhere(view)),
     getViewCounts(member.workspaceId),
   ])
 
