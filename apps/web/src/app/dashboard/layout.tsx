@@ -35,16 +35,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const userId = await resolveClerkUserId()
   if (!userId) redirect("/sign-in")
 
-  const workspace = await getWorkspace(userId)
+  const workspace = await getWorkspace(userId as string)
 
   if (!workspace) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">
-          No workspace found. Run <code className="text-xs bg-muted px-1 py-0.5 rounded">pnpm db:seed</code> to create the seed workspace.
-        </p>
-      </div>
-    )
+    redirect("/onboarding")
   }
 
   const inboxCount = await getInboxCount(workspace.id)
