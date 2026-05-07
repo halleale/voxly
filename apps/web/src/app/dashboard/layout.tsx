@@ -3,6 +3,14 @@ import { redirect } from "next/navigation"
 import { prisma } from "@voxly/db"
 import { Sidebar } from "@/components/layout/sidebar"
 
+const DEV_CLERK_USER_ID = "seed_owner"
+
+async function resolveClerkUserId(): Promise<string | null> {
+  if (process.env.SKIP_AUTH === "true") return DEV_CLERK_USER_ID
+  const { userId } = await auth()
+  return userId
+}
+
 async function getWorkspace(clerkUserId: string) {
   const member = await prisma.workspaceMember.findFirst({
     where: { clerkUserId },
@@ -24,19 +32,16 @@ async function getInboxCount(workspaceId: string) {
 }
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { userId } = await auth()
+  const userId = await resolveClerkUserId()
   if (!userId) redirect("/sign-in")
 
   const workspace = await getWorkspace(userId)
 
-  // First login: workspace not yet created. Redirect to onboarding.
-  // In Chunk 1 with seed data, the seed member clerkUserId is "seed_owner".
-  // Real users hit this path until we implement workspace creation (Chunk 3).
   if (!workspace) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <p className="text-sm text-muted-foreground">
-          Setting up your workspace… (no workspace found for this user)
+          No workspace found. Run <code className="text-xs bg-muted px-1 py-0.5 rounded">pnpm db:seed</code> to create the seed workspace.
         </p>
       </div>
     )

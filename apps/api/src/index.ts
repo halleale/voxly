@@ -1,4 +1,4 @@
-import { buildApp } from "./app.js"
+import { buildApp } from "./app"
 
 const PORT = Number(process.env.PORT ?? 3001)
 const HOST = process.env.HOST ?? "0.0.0.0"

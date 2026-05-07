@@ -1,1 +1,1 @@
-{ "extends": "../../tsconfig.base.json", "compilerOptions": { "module": "NodeNext", "moduleResolution": "nodenext", "outDir": "dist", "noEmit": true }, "include": ["src"] }
+{ "extends": "../../tsconfig.base.json", "compilerOptions": { "module": "ESNext", "moduleResolution": "bundler", "noEmit": true }, "include": ["src"] }
