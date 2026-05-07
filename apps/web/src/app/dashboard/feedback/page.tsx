@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 import { prisma, createRepo } from "@voxly/db"
-import { FeedbackTable } from "@/components/feedback/feedback-table"
+import { FeedbackView } from "@/components/feedback/feedback-view"
 import type { FeedbackRow } from "@/components/feedback/columns"
 
 const DEV_CLERK_USER_ID = "seed_owner"
@@ -103,9 +103,9 @@ export default async function FeedbackPage({ searchParams }: PageProps) {
         ))}
       </div>
 
-      {/* Table — client component receives server-fetched data */}
-      <div className="flex-1 overflow-auto">
-        <FeedbackTable data={feedbackData} />
+      {/* Table + detail panel — client component receives server-fetched data */}
+      <div className="flex flex-1 overflow-hidden">
+        <FeedbackView data={feedbackData} activeView={view} />
       </div>
     </div>
   )
