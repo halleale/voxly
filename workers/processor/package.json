@@ -11,7 +11,8 @@
   "dependencies": {
     "@voxly/db": "workspace:*",
     "@voxly/queue": "workspace:*",
-    "@voxly/types": "workspace:*"
+    "@voxly/types": "workspace:*",
+    "@voxly/connectors": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

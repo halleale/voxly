@@ -29,9 +29,15 @@ importers:
       '@fastify/sensible':
         specifier: ^6.0.1
         version: 6.0.4
+      '@voxly/connectors':
+        specifier: workspace:*
+        version: link:../../packages/connectors
       '@voxly/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@voxly/queue':
+        specifier: workspace:*
+        version: link:../../packages/queue
       '@voxly/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -129,6 +135,9 @@ importers:
         specifier: workspace:*
         version: link:../types
     devDependencies:
+      '@types/node':
+        specifier: ^22.19.17
+        version: 22.19.17
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -179,6 +188,9 @@ importers:
 
   workers/processor:
     dependencies:
+      '@voxly/connectors':
+        specifier: workspace:*
+        version: link:../../packages/connectors
       '@voxly/db':
         specifier: workspace:*
         version: link:../../packages/db

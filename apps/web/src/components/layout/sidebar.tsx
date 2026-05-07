@@ -14,6 +14,7 @@ import {
   Headphones,
   HelpCircle,
   Zap,
+  PlugZap,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { Connector } from "@voxly/db"
@@ -28,6 +29,7 @@ const SOURCE_ICONS: Record<string, React.ComponentType<{ className?: string }>> 
 
 const NAV_ITEMS = [
   { label: "Feedback",   href: "/dashboard/feedback",   icon: MessageSquare },
+  { label: "Sources",    href: "/dashboard/connectors", icon: PlugZap },
   { label: "Themes",     href: "/dashboard/themes",     icon: Tag },
   { label: "Workflows",  href: "/dashboard/workflows",  icon: GitBranch },
 ]

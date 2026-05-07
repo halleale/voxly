@@ -5,6 +5,8 @@ import authPlugin from "./plugins/auth"
 import dbPlugin from "./plugins/db"
 import health from "./routes/health"
 import feedback from "./routes/feedback"
+import webhooks from "./routes/webhooks"
+import connectors from "./routes/connectors"
 
 export async function buildApp() {
   const app = Fastify({
@@ -23,6 +25,8 @@ export async function buildApp() {
   await app.register(authPlugin)
   await app.register(health)
   await app.register(feedback)
+  await app.register(webhooks)
+  await app.register(connectors)
 
   app.setErrorHandler((err: unknown, _request, reply) => {
     app.log.error(err)
