@@ -14,22 +14,50 @@ import {
   stage1HardFilter,
   stage2SourceFilter,
 } from "@voxly/connectors"
+import {
+  embed,
+  runEmbeddingClassifier,
+  classifyFeedback,
+  scoreSentiment,
+  inferSeverity,
+  generateSummary,
+  type SummaryContext,
+} from "@voxly/ai"
 import type { ConnectorConfig, NormalizedFeedback } from "@voxly/types"
 
 const redis = createRedisConnection()
 const ingestionQueue = createIngestionQueue(redis)
 const aiQueue = createAiPipelineQueue(redis)
 
+// ─── Classifier centroid cache ────────────────────────────────────────────────
+// Loaded from system_config on startup; refreshed hourly.
+// Absence = classifier not seeded yet → fall back to Stage 4 for all items.
+
+let positiveCentroid: number[] | null = null
+let centroidLoadedAt = 0
+const CENTROID_TTL_MS = 60 * 60 * 1000
+
+async function getPositiveCentroid(): Promise<number[] | null> {
+  if (positiveCentroid && Date.now() - centroidLoadedAt < CENTROID_TTL_MS) {
+    return positiveCentroid
+  }
+  const row = await prisma.systemConfig.findUnique({
+    where: { key: "classifier.positive_centroid" },
+  })
+  if (!row) return null
+  const data = row.value as { vector: number[] }
+  positiveCentroid = data.vector
+  centroidLoadedAt = Date.now()
+  return positiveCentroid
+}
+
 // ─── Ingestion worker ─────────────────────────────────────────────────────────
-// Receives raw webhook payloads, normalizes them, runs Stage 1/2 filters,
-// persists to ingestion_queue, then enqueues PROCESS_ITEM for the AI pipeline.
 
 const ingestionWorker = new Worker<IngestItemPayload>(
   QUEUE_NAMES.INGESTION,
   async (job) => {
     const { connectorId, workspaceId, externalId, rawPayload, sourceType } = job.data
 
-    // Load connector for config (allowedChannels, etc.)
     const connector = await prisma.connector.findUnique({ where: { id: connectorId } })
     if (!connector || !connector.enabled) {
       job.log(`Connector ${connectorId} not found or disabled — skipping`)
@@ -47,7 +75,6 @@ const ingestionWorker = new Worker<IngestItemPayload>(
       adapter.normalize(rawPayload, config) as (NormalizedFeedback & { channelId?: string })[]
 
     for (const item of items) {
-      // Stage 1: hard filters
       const s1 = stage1HardFilter(item)
       if (!s1.pass) {
         job.log(`Stage 1 reject [${item.externalId}]: ${s1.reason}`)
@@ -62,16 +89,11 @@ const ingestionWorker = new Worker<IngestItemPayload>(
             rejectReason: s1.reason,
             processedAt: new Date(),
           },
-          update: {
-            status: "REJECTED",
-            rejectReason: s1.reason,
-            processedAt: new Date(),
-          },
+          update: { status: "REJECTED", rejectReason: s1.reason, processedAt: new Date() },
         })
         continue
       }
 
-      // Stage 2: source-specific rules
       const s2 = stage2SourceFilter(item, config)
       if (!s2.pass) {
         job.log(`Stage 2 reject [${item.externalId}]: ${s2.reason}`)
@@ -86,16 +108,11 @@ const ingestionWorker = new Worker<IngestItemPayload>(
             rejectReason: s2.reason,
             processedAt: new Date(),
           },
-          update: {
-            status: "REJECTED",
-            rejectReason: s2.reason,
-            processedAt: new Date(),
-          },
+          update: { status: "REJECTED", rejectReason: s2.reason, processedAt: new Date() },
         })
         continue
       }
 
-      // Passes Stage 1/2 — persist as PENDING for the AI pipeline
       let queueRecord
       try {
         queueRecord = await prisma.ingestionQueue.create({
@@ -108,7 +125,6 @@ const ingestionWorker = new Worker<IngestItemPayload>(
           },
         })
       } catch (err: unknown) {
-        // Unique constraint violation = duplicate; silently skip
         const msg = err instanceof Error ? err.message : String(err)
         if (msg.includes("Unique constraint")) {
           job.log(`Duplicate item [${item.externalId}] — skipping`)
@@ -117,25 +133,19 @@ const ingestionWorker = new Worker<IngestItemPayload>(
         throw err
       }
 
-      // Enqueue for AI pipeline (Chunk 4)
       await aiQueue.add(JOB_NAMES.PROCESS_ITEM, { ingestionQueueId: queueRecord.id })
       job.log(`Queued for AI pipeline: ${queueRecord.id}`)
     }
 
-    // Update connector item count + last activity
     await prisma.connector.update({
       where: { id: connectorId },
-      data: {
-        status: "ACTIVE",
-        errorMessage: null,
-      },
+      data: { status: "ACTIVE", errorMessage: null },
     })
   },
   { connection: redis, concurrency: 10 },
 )
 
-// ─── AI pipeline worker (stub for Chunk 4) ────────────────────────────────────
-// For now: promotes PENDING items to APPROVED and creates FeedbackItem stubs.
+// ─── AI pipeline worker ───────────────────────────────────────────────────────
 
 const aiWorker = new Worker<ProcessItemPayload>(
   QUEUE_NAMES.AI_PIPELINE,
@@ -149,49 +159,181 @@ const aiWorker = new Worker<ProcessItemPayload>(
 
     if (!queueItem || queueItem.status !== "PENDING") return
 
-    // Stub: auto-approve everything until Chunk 4 adds the real classifier
-    await prisma.ingestionQueue.update({
-      where: { id: ingestionQueueId },
-      data: { status: "APPROVED", processedAt: new Date() },
-    })
-
-    // Create feedback item from normalized data (skip if already exists)
     const raw = queueItem.rawPayload as Record<string, unknown>
+    const verbatimText = (raw.verbatimText as string | undefined) ?? ""
 
-    const existing = await prisma.feedbackItem.findFirst({
-      where: { connectorId: queueItem.connectorId, externalId: queueItem.externalId },
-      select: { id: true },
-    })
-
-    if (!existing) {
-      await prisma.feedbackItem.create({
-        data: {
-          workspaceId: queueItem.connector.workspaceId,
-          connectorId: queueItem.connectorId,
-          verbatimText: (raw.verbatimText as string) ?? "",
-          authorName:   raw.authorName   as string | undefined,
-          authorEmail:  raw.authorEmail  as string | undefined,
-          authorUrl:    raw.authorUrl    as string | undefined,
-          sourceType:   queueItem.sourceType,
-          externalId:   queueItem.externalId,
-          externalUrl:  raw.externalUrl  as string | undefined,
-          publishedAt:  raw.publishedAt ? new Date(raw.publishedAt as string) : new Date(),
-          rawPayload:   queueItem.rawPayload ?? undefined,
-          status:       "NEW",
-        },
+    if (!verbatimText.trim()) {
+      await prisma.ingestionQueue.update({
+        where: { id: ingestionQueueId },
+        data: { status: "REJECTED", rejectReason: "empty_text", processedAt: new Date() },
       })
-
-      // Bump connector item count only for net-new items
-      await prisma.connector.update({
-        where: { id: queueItem.connectorId },
-        data: { itemCount: { increment: 1 } },
-      })
+      return
     }
 
-    job.log(`Processed feedback item for ${queueItem.externalId}`)
+    // ── Stage 3: embedding classifier ──────────────────────────────────────
+    let stage3Result: "approved" | "uncertain" | "rejected" = "uncertain"
+    let relevanceScore: number | undefined
+
+    const centroid = await getPositiveCentroid()
+
+    if (centroid) {
+      job.log("Stage 3: running embedding classifier")
+      const embedding = await embed(verbatimText)
+      const { result, score } = runEmbeddingClassifier(embedding, centroid)
+      stage3Result = result
+      relevanceScore = score
+      job.log(`Stage 3: ${result} (score=${score.toFixed(4)})`)
+
+      if (result === "rejected") {
+        await prisma.ingestionQueue.update({
+          where: { id: ingestionQueueId },
+          data: { status: "REJECTED", rejectReason: `stage3:${score.toFixed(4)}`, processedAt: new Date() },
+        })
+        return
+      }
+
+      if (result === "approved") {
+        // Skip Stage 4 — proceed directly to AI enrichment
+        await runAiPipeline(job, queueItem, raw, verbatimText, relevanceScore, embedding)
+        return
+      }
+
+      // result === "uncertain" → fall through to Stage 4
+    } else {
+      job.log("Stage 3: no centroid available, skipping to Stage 4")
+    }
+
+    // ── Stage 4: LLM classifier ─────────────────────────────────────────────
+    job.log("Stage 4: LLM classification")
+    const llmResult = await classifyFeedback(verbatimText)
+    job.log(`Stage 4: ${llmResult}`)
+
+    if (llmResult === "not_feedback") {
+      await prisma.ingestionQueue.update({
+        where: { id: ingestionQueueId },
+        data: { status: "REJECTED", rejectReason: "stage4:not_feedback", processedAt: new Date() },
+      })
+      return
+    }
+
+    if (llmResult === "uncertain") {
+      await prisma.ingestionQueue.update({
+        where: { id: ingestionQueueId },
+        data: { status: "UNCERTAIN", processedAt: new Date() },
+      })
+      job.log("Item routed to inbox for manual review")
+      return
+    }
+
+    // llmResult === "feedback" → approved
+    const embedding = centroid ? await embed(verbatimText) : undefined
+    await runAiPipeline(job, queueItem, raw, verbatimText, relevanceScore, embedding)
   },
   { connection: redis, concurrency: 5 },
 )
+
+// ─── AI enrichment + FeedbackItem creation ────────────────────────────────────
+
+async function runAiPipeline(
+  job: { log: (msg: string) => void },
+  queueItem: Awaited<ReturnType<typeof prisma.ingestionQueue.findUnique>> & {
+    connector: { workspaceId: string }
+  },
+  raw: Record<string, unknown>,
+  verbatimText: string,
+  relevanceScore: number | undefined,
+  embedding: number[] | undefined,
+) {
+  if (!queueItem) return
+
+  const workspaceId = queueItem.connector.workspaceId
+
+  // Check for duplicate FeedbackItem before doing AI work
+  const existing = await prisma.feedbackItem.findFirst({
+    where: { connectorId: queueItem.connectorId, externalId: queueItem.externalId },
+    select: { id: true },
+  })
+  if (existing) {
+    await prisma.ingestionQueue.update({
+      where: { id: queueItem.id },
+      data: { status: "APPROVED", processedAt: new Date() },
+    })
+    return
+  }
+
+  // Enrich with customer data if available
+  const authorEmail = raw.authorEmail as string | undefined
+  const emailDomain = authorEmail ? (authorEmail.split("@")[1] ?? null) : null
+  const customer = emailDomain
+    ? await prisma.customer.findFirst({
+        where: { workspaceId, domain: emailDomain },
+        select: { id: true, name: true, tier: true, arrCents: true },
+      })
+    : null
+
+  job.log("Running sentiment, severity, and summary generation in parallel")
+
+  const [sentiment, severity, extractedSummary] = await Promise.all([
+    scoreSentiment(verbatimText),
+    inferSeverity(verbatimText, customer?.tier ?? undefined),
+    generateSummary(verbatimText, {
+      authorName:   raw.authorName as string | undefined,
+      customerName: customer?.name,
+      customerTier: customer?.tier ?? undefined,
+      arrCents:     customer?.arrCents ?? undefined,
+      sourceType:   queueItem.sourceType,
+    } satisfies SummaryContext),
+  ])
+
+  job.log(`Sentiment: ${sentiment.toFixed(2)}, Severity: ${severity}`)
+
+  const feedbackItem = await prisma.feedbackItem.create({
+    data: {
+      workspaceId,
+      connectorId:      queueItem.connectorId,
+      verbatimText,
+      extractedSummary,
+      authorName:       raw.authorName   as string | undefined,
+      authorEmail:      raw.authorEmail  as string | undefined,
+      authorUrl:        raw.authorUrl    as string | undefined,
+      sourceType:       queueItem.sourceType,
+      externalId:       queueItem.externalId,
+      externalUrl:      raw.externalUrl  as string | undefined,
+      customerId:       customer?.id,
+      sentiment,
+      severity,
+      relevanceScore:   relevanceScore ?? null,
+      publishedAt:      raw.publishedAt ? new Date(raw.publishedAt as string) : new Date(),
+      rawPayload:       queueItem.rawPayload ?? undefined,
+      status:           "NEW",
+    },
+  })
+
+  // Store embedding via raw SQL (pgvector column is outside Prisma schema types)
+  if (embedding && embedding.length > 0) {
+    const vectorLiteral = `[${embedding.join(",")}]`
+    await prisma.$executeRawUnsafe(
+      `UPDATE feedback_items SET embedding = $1::vector WHERE id = $2`,
+      vectorLiteral,
+      feedbackItem.id,
+    )
+    job.log("Embedding stored in pgvector")
+  }
+
+  // Mark approved and bump connector count
+  await Promise.all([
+    prisma.ingestionQueue.update({
+      where: { id: queueItem.id },
+      data: { status: "APPROVED", processedAt: new Date() },
+    }),
+    prisma.connector.update({
+      where: { id: queueItem.connectorId },
+      data: { itemCount: { increment: 1 } },
+    }),
+  ])
+
+  job.log(`FeedbackItem created: ${feedbackItem.id}`)
+}
 
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 
