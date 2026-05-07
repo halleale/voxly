@@ -1,3 +1,7 @@
-// Stub — implemented in Chunk 4
-// OpenAI wrappers: embed, classify, extract, summarize.
-export {}
+export { getOpenAI } from "./client"
+export { embedText, embedBatch, cosineSimilarity } from "./embed"
+export { classifyFeedback, type ClassifyResult } from "./classify"
+export { scoreSentiment } from "./sentiment"
+export { inferSeverity } from "./severity"
+export { generateSummary } from "./summary"
+export { FEEDBACK_EXAMPLES, NOISE_EXAMPLES } from "./seeds"

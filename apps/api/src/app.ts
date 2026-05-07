@@ -5,6 +5,10 @@ import authPlugin from "./plugins/auth"
 import dbPlugin from "./plugins/db"
 import health from "./routes/health"
 import feedback from "./routes/feedback"
+import connectors from "./routes/connectors"
+import webhooks from "./routes/webhooks"
+import inbox from "./routes/inbox"
+import themes from "./routes/themes"
 
 export async function buildApp() {
   const app = Fastify({
@@ -23,6 +27,10 @@ export async function buildApp() {
   await app.register(authPlugin)
   await app.register(health)
   await app.register(feedback)
+  await app.register(connectors)
+  await app.register(webhooks)
+  await app.register(inbox)
+  await app.register(themes)
 
   app.setErrorHandler((err: unknown, _request, reply) => {
     app.log.error(err)
