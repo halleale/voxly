@@ -1,10 +1,10 @@
 import Fastify from "fastify"
 import cors from "@fastify/cors"
 import sensible from "@fastify/sensible"
-import authPlugin from "./plugins/auth"
-import dbPlugin from "./plugins/db"
-import health from "./routes/health"
-import feedback from "./routes/feedback"
+import authPlugin from "./plugins/auth.js"
+import dbPlugin from "./plugins/db.js"
+import health from "./routes/health.js"
+import feedback from "./routes/feedback.js"
 
 export async function buildApp() {
   const app = Fastify({

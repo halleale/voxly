@@ -4,8 +4,6 @@ import { prisma, createRepo } from "@voxly/db"
 import { FeedbackTable } from "@/components/feedback/feedback-table"
 import type { FeedbackRow } from "@/components/feedback/columns"
 
-const DEV_CLERK_USER_ID = "seed_owner"
-
 const SYSTEM_VIEWS = [
   { id: "all",          label: "All feedback" },
   { id: "enterprise",   label: "Enterprise critical" },
@@ -14,12 +12,6 @@ const SYSTEM_VIEWS = [
   { id: "unassigned",   label: "Unassigned" },
   { id: "negative",     label: "Negative sentiment" },
 ]
-
-async function resolveClerkUserId(): Promise<string | null> {
-  if (process.env.SKIP_AUTH === "true") return DEV_CLERK_USER_ID
-  const { userId } = await auth()
-  return userId
-}
 
 async function getFeedbackData(workspaceId: string): Promise<FeedbackRow[]> {
   const repo = createRepo(prisma, workspaceId)
@@ -54,7 +46,7 @@ interface PageProps {
 }
 
 export default async function FeedbackPage({ searchParams }: PageProps) {
-  const userId = await resolveClerkUserId()
+  const { userId } = await auth()
   if (!userId) redirect("/sign-in")
 
   const { view = "all" } = await searchParams
