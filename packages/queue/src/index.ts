@@ -9,6 +9,7 @@ export const QUEUE_NAMES = {
   POLLING:         "polling",
   NIGHTLY_CLUSTER: "nightly-cluster",
   CRM_SYNC:        "crm-sync",
+  GONG_TRANSCRIPT: "gong-transcript",
 } as const
 
 // ─── Job names ────────────────────────────────────────────────────────────────
@@ -77,6 +78,10 @@ export function createClusterQueue(connection: ConnectionOptions) {
 
 export function createCrmSyncQueue(connection: ConnectionOptions) {
   return new Queue<SyncCrmPayload>(QUEUE_NAMES.CRM_SYNC, { connection })
+}
+
+export function createGongTranscriptQueue(connection: ConnectionOptions) {
+  return new Queue<IngestItemPayload>(QUEUE_NAMES.GONG_TRANSCRIPT, { connection })
 }
 
 export { Worker, Queue }

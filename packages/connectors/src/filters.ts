@@ -88,6 +88,27 @@ export function stage2SourceFilter(
       return { pass: true }
     }
 
+    case SourceType.GONG: {
+      // Only ingest customer speech, not rep speech
+      // speakerRole is set by the Gong adapter after GPT-4o extraction
+      const speakerRole = (item as NormalizedFeedback & { speakerRole?: string }).speakerRole
+      if (speakerRole && speakerRole !== "customer") {
+        return { pass: false, reason: "gong_rep_speech" }
+      }
+      return { pass: true }
+    }
+
+    case SourceType.CANNY: {
+      // Allow all post/comment/vote events — vote events carry post text so
+      // Stage 3 relevance will handle noise
+      return { pass: true }
+    }
+
+    case SourceType.HN: {
+      // Already keyword-filtered by Algolia; always pass Stage 2
+      return { pass: true }
+    }
+
     case SourceType.G2:
     case SourceType.TRUSTRADIUS:
       // Vendor API results are pre-filtered; always pass

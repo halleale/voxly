@@ -11,6 +11,9 @@ export interface ConnectorAdapter {
    *  Gong returns N items from one transcript; all other sources return 1. */
   normalize(raw: unknown, config: ConnectorConfig): NormalizedFeedback[]
 
+  /** Async variant for sources that require external API calls during normalization (e.g. Gong). */
+  normalizeAsync?(raw: unknown, config: ConnectorConfig): Promise<NormalizedFeedback[]>
+
   /** Register a webhook with the provider on first connector setup. */
   setupWebhook?(connectorId: string, config: ConnectorConfig): Promise<void>
 

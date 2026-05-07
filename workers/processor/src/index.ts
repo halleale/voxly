@@ -5,6 +5,8 @@ import {
   createAiPipelineQueue,
   createClusterQueue,
   createCrmSyncQueue,
+  createPollingQueue,
+  createGongTranscriptQueue,
   Worker,
   QUEUE_NAMES,
   JOB_NAMES,
@@ -12,12 +14,14 @@ import {
   type ProcessItemPayload,
   type ClusterThemesPayload,
   type SyncCrmPayload,
+  type PollSourcePayload,
 } from "@voxly/queue"
 import {
   connectorRegistry,
   stage1HardFilter,
   stage2SourceFilter,
   fetchHubSpotCompanies,
+  gongConnector,
 } from "@voxly/connectors"
 import {
   embed,
@@ -39,6 +43,8 @@ const ingestionQueue = createIngestionQueue(redis)
 const aiQueue = createAiPipelineQueue(redis)
 const clusterQueue = createClusterQueue(redis)
 const crmSyncQueue = createCrmSyncQueue(redis)
+const pollingQueue = createPollingQueue(redis)
+const gongTranscriptQueue = createGongTranscriptQueue(redis)
 
 // ─── Classifier centroid cache ────────────────────────────────────────────────
 
@@ -707,6 +713,151 @@ const crmSyncWorker = new Worker<SyncCrmPayload>(
   { connection: redis, concurrency: 2 },
 )
 
+// ─── Polling worker (G2, HN, Gong transcript fetch) ──────────────────────────
+// Scheduled via BullMQ repeatable jobs: G2 daily, HN hourly.
+// The Gong connector uses normalizeAsync() after receiving a call-completed webhook.
+
+const pollingWorker = new Worker<PollSourcePayload>(
+  QUEUE_NAMES.POLLING,
+  async (job) => {
+    const { connectorId, workspaceId } = job.data
+
+    const connector = await prisma.connector.findUnique({ where: { id: connectorId } })
+    if (!connector || !connector.enabled) {
+      job.log(`Connector ${connectorId} not found or disabled — skipping poll`)
+      return
+    }
+
+    const adapter = connectorRegistry[connector.type]
+    if (!adapter?.poll) {
+      job.log(`Connector type ${connector.type} does not support polling`)
+      return
+    }
+
+    const config = connector.configJson as ConnectorConfig
+    const since = connector.lastPolledAt ?? new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+    job.log(`Polling ${connector.type} since ${since.toISOString()}`)
+
+    let items: NormalizedFeedback[]
+    try {
+      items = await adapter.poll(config, since)
+    } catch (err) {
+      await prisma.connector.update({
+        where: { id: connectorId },
+        data: { status: "ERROR", errorMessage: String(err) },
+      })
+      throw err
+    }
+
+    job.log(`Poll returned ${items.length} items`)
+
+    for (const item of items) {
+      const jobId = `${connectorId}:${item.externalId}`
+      await ingestionQueue.add(
+        JOB_NAMES.INGEST_ITEM,
+        {
+          connectorId,
+          workspaceId,
+          externalId: item.externalId,
+          rawPayload:  item,
+          sourceType:  connector.type,
+        },
+        { jobId, deduplicate: { id: jobId } },
+      )
+    }
+
+    await prisma.connector.update({
+      where: { id: connectorId },
+      data: { lastPolledAt: new Date(), status: "ACTIVE", errorMessage: null },
+    })
+
+    job.log(`Poll complete — enqueued ${items.length} items`)
+  },
+  { connection: redis, concurrency: 5 },
+)
+
+// ─── Gong async normalization worker ─────────────────────────────────────────
+// A Gong call-completed webhook arrives with just a callId.
+// The ingestion worker calls gongConnector.normalizeAsync() to fetch the
+// transcript and run GPT-4o extraction before handing off to the AI pipeline.
+
+// Patch the ingestion worker to handle Gong's async normalization:
+// When sourceType is GONG, skip the sync normalize() and call normalizeAsync().
+// We implement this by monkey-patching rawPayload handling in the ingestion job
+// via a per-type hook in the existing ingestion worker logic.
+// The gongConnector.normalizeAsync is exposed and called inline in the worker.
+// (See ingestion worker above — it already calls adapter.normalize(), but for
+//  Gong the return is [] and we need async. We handle it with a type check below.)
+
+// Override: if the adapter has normalizeAsync, use it in the ingestion worker.
+// The worker already imports gongConnector; we register a post-normalize hook here.
+// This is done cleanly by the ingestion worker checking for the async path:
+// The worker calls adapter.normalize() first — for Gong this returns [].
+// We register an additional job type INGEST_GONG_CALL to handle the async path.
+const INGEST_GONG_CALL = "INGEST_GONG_CALL"
+
+const gongWorker = new Worker<IngestItemPayload>(
+  QUEUE_NAMES.GONG_TRANSCRIPT,
+  async (job) => {
+    const { connectorId, workspaceId, rawPayload } = job.data
+
+    const connector = await prisma.connector.findUnique({ where: { id: connectorId } })
+    if (!connector || !connector.enabled) return
+
+    const config = connector.configJson as ConnectorConfig
+
+    job.log("Fetching Gong transcript and extracting customer feedback via GPT-4o")
+
+    let items: NormalizedFeedback[]
+    try {
+      items = await gongConnector.normalizeAsync!(rawPayload, config)
+    } catch (err) {
+      await prisma.connector.update({
+        where: { id: connectorId },
+        data: { status: "ERROR", errorMessage: String(err) },
+      })
+      throw err
+    }
+
+    job.log(`Gong extraction returned ${items.length} customer segments`)
+
+    for (const item of items) {
+      const s1 = stage1HardFilter(item)
+      if (!s1.pass) continue
+      const s2 = stage2SourceFilter(item, config)
+      if (!s2.pass) continue
+
+      let queueRecord
+      try {
+        queueRecord = await prisma.ingestionQueue.create({
+          data: {
+            connectorId,
+            externalId:  item.externalId,
+            rawPayload:  item.rawPayload as object,
+            sourceType:  item.sourceType,
+            status:      "PENDING",
+          },
+        })
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg.includes("Unique constraint")) continue
+        throw err
+      }
+
+      await aiQueue.add(JOB_NAMES.PROCESS_ITEM, { ingestionQueueId: queueRecord.id })
+    }
+
+    await prisma.connector.update({
+      where: { id: connectorId },
+      data: { status: "ACTIVE", errorMessage: null },
+    })
+  },
+  { connection: redis, concurrency: 3 },
+)
+
+void INGEST_GONG_CALL  // referenced for future explicit scheduling if needed
+
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 
 async function shutdown() {
@@ -715,6 +866,8 @@ async function shutdown() {
   await aiWorker.close()
   await clusterWorker.close()
   await crmSyncWorker.close()
+  await pollingWorker.close()
+  await gongWorker.close()
   await redis.quit()
   await prisma.$disconnect()
   process.exit(0)
@@ -739,7 +892,15 @@ crmSyncWorker.on("failed", (job, err) => {
   console.error(`CRM sync job ${job?.id} failed:`, err)
 })
 
+pollingWorker.on("failed", (job, err) => {
+  console.error(`Polling job ${job?.id} failed:`, err)
+})
+
+gongWorker.on("failed", (job, err) => {
+  console.error(`Gong extraction job ${job?.id} failed:`, err)
+})
+
 console.log("Voxly processor worker started")
 
-// Export queue handles for use from API (schedule nightly job, trigger CRM sync)
-export { clusterQueue, crmSyncQueue }
+// Export queue handles for use from API (schedule nightly job, trigger CRM sync, poll)
+export { clusterQueue, crmSyncQueue, pollingQueue, gongTranscriptQueue }

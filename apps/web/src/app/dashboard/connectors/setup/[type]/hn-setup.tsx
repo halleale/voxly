@@ -1,0 +1,92 @@
+"use client"
+
+import { useState } from "react"
+import { useRouter } from "next/navigation"
+import { Hash } from "lucide-react"
+import { Button } from "@/components/ui/button"
+
+interface HNSetupProps {
+  oauthError?: string
+}
+
+export function HNSetup({ oauthError }: HNSetupProps) {
+  const router = useRouter()
+  const [keywords, setKeywords] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(oauthError ?? null)
+
+  async function handleConnect() {
+    const kws = keywords
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean)
+
+    if (kws.length === 0) {
+      setError("At least one keyword is required")
+      return
+    }
+    setSaving(true)
+    setError(null)
+
+    try {
+      const res = await fetch("/api/connectors/hn/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keywords: kws }),
+      })
+      const data = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(data.error ?? "Connection failed")
+      router.push("/dashboard/connectors")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Connection failed")
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-md space-y-6 p-8">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 border border-amber-200">
+          <Hash className="h-5 w-5 text-amber-600" />
+        </div>
+        <div>
+          <h2 className="font-semibold">Connect Hacker News</h2>
+          <p className="text-sm text-muted-foreground">HN mentions — polled hourly via Algolia</p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+      )}
+
+      <div className="rounded-lg border border-border p-4 space-y-2 text-sm">
+        <p className="font-medium">How it works:</p>
+        <ul className="space-y-1 text-muted-foreground">
+          <li>• Voxly searches HN every hour via the public Algolia API</li>
+          <li>• No API key required — entirely public</li>
+          <li>• Matches stories and comments containing your keywords</li>
+          <li>• Stage 3/4 relevance filtering removes unrelated mentions</li>
+        </ul>
+      </div>
+
+      <div className="space-y-4">
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">Keywords to monitor</label>
+          <input
+            className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+            placeholder="YourProduct, yourproduct.com, @yourhandle"
+            value={keywords}
+            onChange={(e) => setKeywords(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Comma-separated. Use your product name, domain, and any common misspellings.
+          </p>
+        </div>
+
+        <Button className="w-full" onClick={handleConnect} disabled={saving}>
+          {saving ? "Connecting…" : "Connect Hacker News"}
+        </Button>
+      </div>
+    </div>
+  )
+}

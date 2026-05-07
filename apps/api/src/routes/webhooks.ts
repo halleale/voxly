@@ -2,22 +2,34 @@ import type { FastifyPluginAsync } from "fastify"
 import {
   createRedisConnection,
   createIngestionQueue,
+  createGongTranscriptQueue,
   JOB_NAMES,
 } from "@voxly/queue"
 import {
   verifySlackSignature,
   verifyIntercomSignature,
+  verifyZendeskSignature,
+  verifyCannySignature,
+  verifyGongSignature,
 } from "@voxly/connectors"
 import type { ConnectorConfig } from "@voxly/types"
 
-// Lazily initialize the queue on first use
+// Lazily initialize queues on first use
 let _ingestionQueue: ReturnType<typeof createIngestionQueue> | null = null
+let _gongQueue: ReturnType<typeof createGongTranscriptQueue> | null = null
 
 function getIngestionQueue() {
   if (!_ingestionQueue) {
     _ingestionQueue = createIngestionQueue(createRedisConnection())
   }
   return _ingestionQueue
+}
+
+function getGongQueue() {
+  if (!_gongQueue) {
+    _gongQueue = createGongTranscriptQueue(createRedisConnection())
+  }
+  return _gongQueue
 }
 
 const webhooks: FastifyPluginAsync = async (fastify) => {
@@ -88,6 +100,43 @@ const webhooks: FastifyPluginAsync = async (fastify) => {
         if (!valid) {
           return reply.code(401).send({ error: "Invalid Intercom signature" })
         }
+      } else if (connector.type === "ZENDESK") {
+        const timestamp = headers["x-zendesk-webhook-signature-timestamp"] as string | undefined
+        const signature = headers["x-zendesk-webhook-signature"] as string | undefined
+        const signingSecret = config.webhookSecret
+
+        if (!timestamp || !signature || !signingSecret) {
+          return reply.code(401).send({ error: "Missing Zendesk signature headers" })
+        }
+
+        const valid = verifyZendeskSignature(signingSecret, rawBody, timestamp, signature)
+        if (!valid) {
+          return reply.code(401).send({ error: "Invalid Zendesk signature" })
+        }
+      } else if (connector.type === "CANNY") {
+        const signature = headers["x-canny-signature"] as string | undefined
+        const apiKey = config.accessToken
+
+        if (!signature || !apiKey) {
+          return reply.code(401).send({ error: "Missing Canny signature" })
+        }
+
+        const valid = verifyCannySignature(apiKey, rawBody, signature)
+        if (!valid) {
+          return reply.code(401).send({ error: "Invalid Canny signature" })
+        }
+      } else if (connector.type === "GONG") {
+        const signature = headers["x-gong-signature"] as string | undefined
+        const signingKey = config.webhookSecret
+
+        if (!signature || !signingKey) {
+          return reply.code(401).send({ error: "Missing Gong signature" })
+        }
+
+        const valid = verifyGongSignature(signingKey, rawBody, signature)
+        if (!valid) {
+          return reply.code(401).send({ error: "Invalid Gong signature" })
+        }
       }
 
       // ── Parse body and enqueue ──────────────────────────────────────────────
@@ -104,17 +153,21 @@ const webhooks: FastifyPluginAsync = async (fastify) => {
       // we need something unique for the job deduplication key here.
       const jobId = `${connectorId}:${Date.now()}:${Math.random().toString(36).slice(2)}`
 
-      await getIngestionQueue().add(
-        JOB_NAMES.INGEST_ITEM,
-        {
-          connectorId,
-          workspaceId: connector.workspaceId,
-          externalId:  jobId, // worker will use adapter.normalize() to get the real ID
-          rawPayload:  payload,
-          sourceType:  connector.type,
-        },
-        { jobId },
-      )
+      const jobData = {
+        connectorId,
+        workspaceId: connector.workspaceId,
+        externalId:  jobId,
+        rawPayload:  payload,
+        sourceType:  connector.type,
+      }
+
+      // Gong webhooks carry a callId — route to the dedicated Gong transcript
+      // queue so the worker can fetch the full transcript via the Transcript API.
+      if (connector.type === "GONG") {
+        await getGongQueue().add(JOB_NAMES.INGEST_ITEM, jobData, { jobId })
+      } else {
+        await getIngestionQueue().add(JOB_NAMES.INGEST_ITEM, jobData, { jobId })
+      }
 
       return reply.code(200).send({ ok: true })
     },
