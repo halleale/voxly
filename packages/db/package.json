@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "postinstall": "prisma generate --schema=./prisma/schema.prisma",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
