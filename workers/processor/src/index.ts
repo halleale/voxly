@@ -8,6 +8,7 @@ import {
   createPollingQueue,
   createGongTranscriptQueue,
   createWorkflowExecutionQueue,
+  createWeeklyBriefingQueue,
   Worker,
   QUEUE_NAMES,
   JOB_NAMES,
@@ -17,6 +18,7 @@ import {
   type SyncCrmPayload,
   type PollSourcePayload,
   type ExecuteWorkflowPayload,
+  type WeeklyBriefingPayload,
 } from "@voxly/queue"
 import {
   connectorRegistry,
@@ -50,6 +52,7 @@ const crmSyncQueue = createCrmSyncQueue(redis)
 const pollingQueue = createPollingQueue(redis)
 const gongTranscriptQueue = createGongTranscriptQueue(redis)
 const workflowQueue = createWorkflowExecutionQueue(redis)
+const weeklyBriefingQueue = createWeeklyBriefingQueue(redis)
 
 // ─── Classifier centroid cache ────────────────────────────────────────────────
 
@@ -1171,6 +1174,135 @@ const workflowWorker = new Worker<ExecuteWorkflowPayload>(
   { connection: redis, concurrency: 10 },
 )
 
+// ─── Weekly briefing worker ───────────────────────────────────────────────────
+// Scheduled every Monday at 9am UTC. Uses GPT-4o to summarise the week's top
+// themes and feedback, then posts to any configured Slack channel.
+
+const weeklyBriefingWorker = new Worker<WeeklyBriefingPayload>(
+  QUEUE_NAMES.WEEKLY_BRIEFING,
+  async (job) => {
+    const { workspaceId } = job.data
+    job.log(`Generating weekly briefing for workspace ${workspaceId}`)
+
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+
+    const [topThemes, recentItems, spiking] = await Promise.all([
+      prisma.theme.findMany({
+        where: { workspaceId, isProto: false },
+        orderBy: { itemCount: "desc" },
+        take: 5,
+        select: { name: true, itemCount: true, isSpiking: true, description: true },
+      }),
+      prisma.feedbackItem.findMany({
+        where: { workspaceId, ingestedAt: { gte: oneWeekAgo } },
+        orderBy: { ingestedAt: "desc" },
+        take: 20,
+        select: { extractedSummary: true, verbatimText: true, sentiment: true, severity: true },
+      }),
+      prisma.theme.findMany({
+        where: { workspaceId, isSpiking: true, isProto: false },
+        select: { name: true, itemCount: true },
+      }),
+    ])
+
+    const weekCount = recentItems.length
+    const avgSentiment = recentItems
+      .filter((i) => i.sentiment != null)
+      .reduce((sum, i, _, arr) => sum + (i.sentiment as number) / arr.length, 0)
+
+    const highSeverityCount = recentItems.filter((i) => i.severity === "HIGH").length
+
+    const summaries = recentItems
+      .slice(0, 10)
+      .map((i) => `- ${i.extractedSummary ?? i.verbatimText.slice(0, 120)}`)
+      .join("\n")
+
+    const themeLines = topThemes
+      .map((t) => `- ${t.name} (${t.itemCount} items total${t.isSpiking ? ", 🔥 spiking" : ""})${t.description ? `: ${t.description}` : ""}`)
+      .join("\n")
+
+    const prompt = `You are a product manager assistant generating a concise weekly feedback briefing.
+
+Workspace data for the past 7 days:
+- ${weekCount} new feedback items ingested
+- Average sentiment: ${avgSentiment.toFixed(2)} (range: -1.0 negative to +1.0 positive)
+- High-severity items: ${highSeverityCount}
+- Spiking themes: ${spiking.map((t) => t.name).join(", ") || "none"}
+
+Top themes (all time):
+${themeLines}
+
+Sample feedback this week:
+${summaries}
+
+Write a concise weekly briefing (3-5 bullet points) covering:
+1. Overall sentiment trend and volume
+2. Any spiking or high-severity themes that need attention
+3. Key product feedback themes from this week
+4. One recommended action for the product team
+
+Use plain text, no markdown headers. Keep it under 200 words.`
+
+    let briefingText: string
+    try {
+      const { default: OpenAI } = await import("openai")
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+      const res = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 400,
+        temperature: 0.5,
+      })
+      briefingText = res.choices[0]?.message?.content?.trim() ?? "No briefing generated."
+    } catch (err) {
+      job.log(`GPT-4o briefing failed: ${err}`)
+      briefingText = `Weekly feedback summary: ${weekCount} items this week. Top theme: ${topThemes[0]?.name ?? "none"}. Avg sentiment: ${avgSentiment.toFixed(2)}.`
+    }
+
+    // Post to every active Slack connector
+    const slackConnectors = await prisma.connector.findMany({
+      where: { workspaceId, type: "SLACK", enabled: true, status: "ACTIVE" },
+    })
+
+    for (const connector of slackConnectors) {
+      const cfg = connector.configJson as { accessToken?: string; settings?: { briefingChannel?: string } }
+      const token = cfg.accessToken
+      const channel = cfg.settings?.briefingChannel ?? "#product-feedback"
+
+      if (!token) continue
+
+      const dateStr = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      const slackText = `*Weekly Feedback Briefing — ${dateStr}*\n\n${briefingText}`
+
+      try {
+        await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ channel, text: slackText }),
+        })
+      } catch (err) {
+        job.log(`Slack post failed for connector ${connector.id}: ${err}`)
+      }
+    }
+
+    job.log(`Weekly briefing complete — posted to ${slackConnectors.length} Slack workspace(s)`)
+    return { weekCount, briefingText }
+  },
+  { connection: redis, concurrency: 2 },
+)
+
+// Schedule weekly briefing: every Monday at 9am UTC
+weeklyBriefingQueue.add(
+  "WEEKLY_BRIEFING_SCHEDULER",
+  {},
+  {
+    repeat: { pattern: "0 9 * * MON" },
+    removeOnComplete: { count: 10 },
+    removeOnFail: { count: 5 },
+    jobId: "weekly-briefing-global",
+  },
+).catch(() => { /* scheduler enqueue is best-effort at startup */ })
+
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 
 async function shutdown() {
@@ -1182,6 +1314,7 @@ async function shutdown() {
   await pollingWorker.close()
   await gongWorker.close()
   await workflowWorker.close()
+  await weeklyBriefingWorker.close()
   await redis.quit()
   await prisma.$disconnect()
   process.exit(0)
@@ -1218,7 +1351,11 @@ workflowWorker.on("failed", (job, err) => {
   console.error(`Workflow execution job ${job?.id} failed:`, err)
 })
 
+weeklyBriefingWorker.on("failed", (job, err) => {
+  console.error(`Weekly briefing job ${job?.id} failed:`, err)
+})
+
 console.log("Voxly processor worker started")
 
 // Export queue handles for use from API (schedule nightly job, trigger CRM sync, poll)
-export { clusterQueue, crmSyncQueue, pollingQueue, gongTranscriptQueue, workflowQueue }
+export { clusterQueue, crmSyncQueue, pollingQueue, gongTranscriptQueue, workflowQueue, weeklyBriefingQueue }

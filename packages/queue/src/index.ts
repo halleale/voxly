@@ -11,6 +11,7 @@ export const QUEUE_NAMES = {
   CRM_SYNC:           "crm-sync",
   GONG_TRANSCRIPT:    "gong-transcript",
   WORKFLOW_EXECUTION: "workflow-execution",
+  WEEKLY_BRIEFING:    "weekly-briefing",
 } as const
 
 // ─── Job names ────────────────────────────────────────────────────────────────
@@ -60,6 +61,10 @@ export interface ExecuteWorkflowPayload {
   testRun?: boolean
 }
 
+export interface WeeklyBriefingPayload {
+  workspaceId: string
+}
+
 // ─── Redis connection ─────────────────────────────────────────────────────────
 
 export function createRedisConnection(): IORedis {
@@ -96,6 +101,10 @@ export function createGongTranscriptQueue(connection: ConnectionOptions) {
 
 export function createWorkflowExecutionQueue(connection: ConnectionOptions) {
   return new Queue<ExecuteWorkflowPayload>(QUEUE_NAMES.WORKFLOW_EXECUTION, { connection })
+}
+
+export function createWeeklyBriefingQueue(connection: ConnectionOptions) {
+  return new Queue<WeeklyBriefingPayload>(QUEUE_NAMES.WEEKLY_BRIEFING, { connection })
 }
 
 export { Worker, Queue }

@@ -24,6 +24,7 @@ const AVAILABLE_CONNECTORS = [
   { type: "CANNY",    label: "Canny",           icon: MessageSquare, description: "Feature requests and votes" },
   { type: "G2",       label: "G2",              icon: Star,          description: "G2 product reviews — polled daily" },
   { type: "HN",       label: "Hacker News",     icon: Hash,          description: "HN mentions — polled hourly via Algolia" },
+  { type: "REDDIT",   label: "Reddit",          icon: MessageSquare, description: "Reddit posts and comments — polled hourly" },
   { type: "HUBSPOT",  label: "HubSpot",         icon: Building2,     description: "CRM sync — company ARR and tier data" },
   { type: "LINEAR",   label: "Linear",          icon: GitBranch,     description: "Create and link issues from feedback" },
   { type: "JIRA",     label: "Jira",            icon: Ticket,        description: "Create and link Jira issues from feedback" },
@@ -37,7 +38,7 @@ const STATUS_CONFIG = {
 } as const
 
 // Polling connectors can be manually triggered
-const POLLING_CONNECTORS = new Set(["G2", "HN"])
+const POLLING_CONNECTORS = new Set(["G2", "HN", "REDDIT"])
 
 // OAuth connectors that can be re-authed via their setup flow
 const OAUTH_CONNECTORS = new Set(["SLACK", "INTERCOM", "HUBSPOT", "LINEAR", "JIRA"])

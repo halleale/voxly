@@ -16,10 +16,33 @@ export default async function ThemesPage() {
   })
   if (!workspace) redirect("/onboarding")
 
-  const themes = await prisma.theme.findMany({
-    where: { workspaceId: workspace.id },
-    orderBy: [{ isSpiking: "desc" }, { itemCount: "desc" }],
+  const since28d = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000)
+
+  const [themes, recentItems] = await Promise.all([
+    prisma.theme.findMany({
+      where: { workspaceId: workspace.id },
+      orderBy: [{ isSpiking: "desc" }, { itemCount: "desc" }],
+    }),
+    prisma.feedbackItem.findMany({
+      where: { workspaceId: workspace.id, themeId: { not: null }, ingestedAt: { gte: since28d } },
+      select: { themeId: true, ingestedAt: true },
+    }),
+  ])
+
+  // Build sparkline counts per theme (last 28 days bucketed by day)
+  const dateLabels: string[] = Array.from({ length: 28 }, (_, i) => {
+    const d = new Date(Date.now() - (27 - i) * 24 * 60 * 60 * 1000)
+    return d.toISOString().slice(0, 10)
   })
+  const sparklineMap = new Map<string, number[]>()
+  for (const item of recentItems) {
+    const tid = item.themeId!
+    const date = item.ingestedAt.toISOString().slice(0, 10)
+    if (!sparklineMap.has(tid)) sparklineMap.set(tid, new Array(28).fill(0))
+    const idx = dateLabels.indexOf(date)
+    const arr = sparklineMap.get(tid)
+    if (idx >= 0 && arr) arr[idx] = (arr[idx] ?? 0) + 1
+  }
 
   const spikingCount = themes.filter((t) => t.isSpiking && !t.isProto).length
 
@@ -49,6 +72,7 @@ export default async function ThemesPage() {
             ...t,
             lastActiveAt: t.lastActiveAt?.toISOString() ?? null,
             createdAt: t.createdAt.toISOString(),
+            sparkline: sparklineMap.get(t.id) ?? new Array(28).fill(0),
           }))}
           workspaceId={workspace.id}
         />

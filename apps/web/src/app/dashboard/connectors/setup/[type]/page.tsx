@@ -9,6 +9,7 @@ import { G2Setup } from "./g2-setup"
 import { GongSetup } from "./gong-setup"
 import { CannySetup } from "./canny-setup"
 import { HNSetup } from "./hn-setup"
+import { RedditSetup } from "./reddit-setup"
 import { JiraSetup } from "./jira-setup"
 
 const DEV_CLERK_USER_ID = "seed_owner"
@@ -50,6 +51,8 @@ export default async function ConnectorSetupPage({ params, searchParams }: PageP
       return <CannySetup oauthError={query.error} />
     case "hn":
       return <HNSetup oauthError={query.error} />
+    case "reddit":
+      return <RedditSetup oauthError={query.error} />
     case "jira":
       return <JiraSetup oauthCode={query.code} oauthError={query.error} />
     default:

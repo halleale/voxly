@@ -16,6 +16,28 @@ interface Theme {
   isProto: boolean
   lastActiveAt: string | null
   createdAt: string
+  sparkline?: number[]
+}
+
+function Sparkline({ counts }: { counts: number[] }) {
+  const max = Math.max(...counts, 1)
+  const width = counts.length * 4
+  const height = 24
+  const points = counts
+    .map((v, i) => `${i * 4},${height - Math.round((v / max) * (height - 2)) - 1}`)
+    .join(" ")
+  return (
+    <svg width={width} height={height} className="shrink-0 opacity-60">
+      <polyline
+        points={points}
+        fill="none"
+        stroke="hsl(var(--primary))"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
 }
 
 interface ThemesListProps {
@@ -159,6 +181,11 @@ export function ThemesList({ themes, workspaceId }: ThemesListProps) {
                     </div>
                   )}
                 </div>
+
+                {/* Sparkline */}
+                {theme.sparkline && theme.sparkline.some((v) => v > 0) && (
+                  <Sparkline counts={theme.sparkline} />
+                )}
 
                 {/* Meta */}
                 <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">

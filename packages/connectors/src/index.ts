@@ -16,6 +16,7 @@ export { g2Connector, starRatingToSentiment } from "./g2"
 export { gongConnector, verifyGongSignature } from "./gong"
 export { cannyConnector, verifyCannySignature } from "./canny"
 export { hnConnector } from "./hn"
+export { redditConnector } from "./reddit"
 export {
   jiraConnector,
   fetchJiraCloudId,
@@ -39,6 +40,7 @@ import { g2Connector } from "./g2"
 import { gongConnector } from "./gong"
 import { cannyConnector } from "./canny"
 import { hnConnector } from "./hn"
+import { redditConnector } from "./reddit"
 import { jiraConnector } from "./jira"
 import { SourceType } from "@voxly/types"
 
@@ -53,5 +55,6 @@ export const connectorRegistry: Record<string, ConnectorAdapter> = {
   [SourceType.GONG]:      gongConnector,
   [SourceType.CANNY]:     cannyConnector,
   [SourceType.HN]:        hnConnector,
+  [SourceType.REDDIT]:    redditConnector,
   [SourceType.JIRA]:      jiraConnector,
 }
