@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Ticket } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 
 interface JiraSetupProps {
   oauthCode?: string
@@ -79,9 +79,7 @@ export function JiraSetup({ oauthCode, oauthError }: JiraSetupProps) {
         </p>
       </div>
 
-      <Button asChild className="w-full">
-        <a href={authUrl}>Connect with Atlassian</a>
-      </Button>
+      <a href={authUrl} className={buttonVariants({ className: "w-full" })}>Connect with Atlassian</a>
     </div>
   )
 }

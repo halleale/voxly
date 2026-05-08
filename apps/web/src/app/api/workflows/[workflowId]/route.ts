@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
-import { prisma } from "@voxly/db"
+import { prisma, Prisma } from "@voxly/db"
 import type { WorkflowGraph } from "@voxly/types"
 
 const DEV_CLERK_USER_ID = "seed_owner"
@@ -50,7 +50,7 @@ export async function PATCH(
     where: { id: wf.id },
     data: {
       ...(body.name !== undefined && { name: body.name.trim() }),
-      ...(body.graphJson !== undefined && { graphJson: body.graphJson }),
+      ...(body.graphJson !== undefined && { graphJson: body.graphJson as unknown as Prisma.InputJsonValue }),
       ...(body.isActive !== undefined && { isActive: body.isActive }),
     },
   })

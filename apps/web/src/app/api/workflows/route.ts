@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
-import { prisma } from "@voxly/db"
+import { prisma, Prisma } from "@voxly/db"
 import type { WorkflowGraph } from "@voxly/types"
 
 const DEV_CLERK_USER_ID = "seed_owner"
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     data: {
       workspaceId,
       name: body.name.trim(),
-      graphJson: body.graphJson ?? { nodes: [], edges: [] },
+      graphJson: (body.graphJson ?? { nodes: [], edges: [] }) as unknown as Prisma.InputJsonValue,
       isActive: body.isActive ?? false,
     },
   })

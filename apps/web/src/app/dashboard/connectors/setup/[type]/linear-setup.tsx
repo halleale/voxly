@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { GitBranch, ExternalLink } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 
 interface LinearSetupProps {
   oauthCode?: string
@@ -77,12 +77,10 @@ export function LinearSetup({ oauthCode, oauthError }: LinearSetupProps) {
         </p>
       </div>
 
-      <Button asChild className="w-full">
-        <a href={authUrl}>
-          <ExternalLink className="mr-2 h-4 w-4" />
-          Connect Linear
-        </a>
-      </Button>
+      <a href={authUrl} className={buttonVariants({ className: "w-full" })}>
+        <ExternalLink className="mr-2 h-4 w-4" />
+        Connect Linear
+      </a>
     </div>
   )
 }

@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Building2, ExternalLink } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 
 interface HubSpotSetupProps {
   oauthCode?: string
@@ -81,12 +81,10 @@ export function HubSpotSetup({ oauthCode, oauthError }: HubSpotSetupProps) {
         </p>
       </div>
 
-      <Button asChild className="w-full">
-        <a href={authUrl}>
-          <ExternalLink className="mr-2 h-4 w-4" />
-          Connect HubSpot
-        </a>
-      </Button>
+      <a href={authUrl} className={buttonVariants({ className: "w-full" })}>
+        <ExternalLink className="mr-2 h-4 w-4" />
+        Connect HubSpot
+      </a>
     </div>
   )
 }
