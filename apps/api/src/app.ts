@@ -11,6 +11,7 @@ import connectors from "./routes/connectors"
 import themes from "./routes/themes"
 import actions from "./routes/actions"
 import jira from "./routes/jira"
+import workflows from "./routes/workflows"
 
 export async function buildApp() {
   const app = Fastify({
@@ -35,6 +36,7 @@ export async function buildApp() {
   await app.register(themes)
   await app.register(actions)
   await app.register(jira)
+  await app.register(workflows)
 
   app.setErrorHandler((err: unknown, _request, reply) => {
     app.log.error(err)
