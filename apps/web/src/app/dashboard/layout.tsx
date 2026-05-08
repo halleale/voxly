@@ -3,10 +3,7 @@ import { redirect } from "next/navigation"
 import { prisma } from "@voxly/db"
 import { Sidebar } from "@/components/layout/sidebar"
 
-const DEV_CLERK_USER_ID = "seed_owner"
-
 async function resolveClerkUserId(): Promise<string | null> {
-  if (process.env.SKIP_AUTH === "true") return DEV_CLERK_USER_ID
   const { userId } = await auth()
   return userId
 }
