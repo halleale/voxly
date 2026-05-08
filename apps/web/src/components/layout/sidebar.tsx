@@ -18,7 +18,13 @@ import {
   PlugZap,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { Connector } from "@voxly/db"
+
+interface Connector {
+  id: string
+  type: string
+  name: string
+  itemCount: number
+}
 
 const SOURCE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   SLACK:     Slack,

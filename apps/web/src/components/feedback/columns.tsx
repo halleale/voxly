@@ -1,8 +1,45 @@
 "use client"
 
 import { createColumnHelper } from "@tanstack/react-table"
-import type { FeedbackItem, Customer, Theme, WorkspaceMember, Connector, LinkedTicket } from "@voxly/db"
 import { Badge } from "@/components/ui/badge"
+
+interface FeedbackItem {
+  id: string
+  verbatimText: string
+  extractedSummary: string | null
+  sourceType: string
+  sentiment: number | null
+  severity: string | null
+  status: string
+  publishedAt: Date
+}
+
+interface Customer {
+  id: string
+  name: string
+  tier: string
+  arrCents: number | null
+}
+
+interface Theme {
+  id: string
+  slug: string
+}
+
+interface WorkspaceMember {
+  id: string
+}
+
+interface Connector {
+  id: string
+  type: string
+}
+
+interface LinkedTicket {
+  id: string
+  ticketUrl: string
+  ticketStatus: string | null
+}
 import { formatAge, formatArr, formatSentiment, cn } from "@/lib/utils"
 import {
   Slack, MessageCircle, Star, HelpCircle, Headphones,
