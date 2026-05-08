@@ -1,6 +1,9 @@
 import type { FastifyPluginAsync } from "fastify"
 import { createRepo } from "@voxly/db"
+import { MemberRole } from "@voxly/types"
 import type { PaginationParams } from "@voxly/types"
+import { requireRole } from "../plugins/roles"
+import { writeAudit } from "../plugins/audit"
 
 interface FeedbackQuery extends PaginationParams {
   status?: string
@@ -9,14 +12,17 @@ interface FeedbackQuery extends PaginationParams {
   sourceType?: string
 }
 
+interface PatchFeedbackBody {
+  status?: string
+  assigneeId?: string | null
+  themeId?: string | null
+}
+
 const feedback: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { workspaceId: string }; Querystring: FeedbackQuery }>(
     "/api/workspaces/:workspaceId/feedback",
     async (request, reply) => {
-      const { workspaceId } = request.params
-
-      // Enforce workspace isolation — requester can only access their own workspace
-      if (workspaceId !== request.workspaceId) {
+      if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden", code: "FORBIDDEN" })
       }
 
@@ -30,7 +36,7 @@ const feedback: FastifyPluginAsync = async (fastify) => {
       if (request.query.severity) where["severity"] = request.query.severity
       if (request.query.sourceType) where["sourceType"] = request.query.sourceType
 
-      const repo = createRepo(fastify.prisma, workspaceId)
+      const repo = createRepo(fastify.prisma, request.params.workspaceId)
 
       const [data, total] = await Promise.all([
         repo.feedbackItem.findMany({
@@ -48,13 +54,55 @@ const feedback: FastifyPluginAsync = async (fastify) => {
         repo.feedbackItem.count({ where }),
       ])
 
-      return {
-        data,
-        total,
-        page,
-        pageSize,
-        hasMore: skip + data.length < total,
+      return { data, total, page, pageSize, hasMore: skip + data.length < total }
+    }
+  )
+
+  // PATCH /api/workspaces/:workspaceId/feedback/:itemId — status, assignment, theme
+  fastify.patch<{
+    Params: { workspaceId: string; itemId: string }
+    Body: PatchFeedbackBody
+  }>(
+    "/api/workspaces/:workspaceId/feedback/:itemId",
+    async (request, reply) => {
+      if (request.workspaceId !== request.params.workspaceId) {
+        return reply.code(403).send({ error: "Forbidden", code: "FORBIDDEN" })
       }
+      if (await requireRole(request, reply, MemberRole.MEMBER)) return
+
+      const { itemId } = request.params
+      const item = await fastify.prisma.feedbackItem.findUnique({
+        where: { id: itemId },
+        select: { workspaceId: true, status: true, assigneeId: true },
+      })
+      if (!item || item.workspaceId !== request.params.workspaceId) {
+        return reply.code(404).send({ error: "Not found" })
+      }
+
+      const data: Record<string, unknown> = {}
+      if (request.body.status !== undefined) data["status"] = request.body.status
+      if (request.body.assigneeId !== undefined) data["assigneeId"] = request.body.assigneeId
+      if (request.body.themeId !== undefined) data["themeId"] = request.body.themeId
+
+      const updated = await fastify.prisma.feedbackItem.update({
+        where: { id: itemId },
+        data,
+      })
+
+      const action = request.body.assigneeId !== undefined
+        ? "FEEDBACK_ASSIGNED" as const
+        : request.body.status === "ARCHIVED"
+          ? "FEEDBACK_ARCHIVED" as const
+          : "FEEDBACK_STATUS_CHANGED" as const
+
+      await writeAudit(fastify.prisma, request, {
+        entityType: "feedback_item",
+        entityId: itemId,
+        action,
+        metadata: { previous: { status: item.status, assigneeId: item.assigneeId }, next: data },
+      })
+
+      return updated
     }
   )
 }

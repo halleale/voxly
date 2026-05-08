@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync } from "fastify"
+import { MemberRole } from "@voxly/types"
+import { requireRole } from "../plugins/roles"
+import { writeAudit } from "../plugins/audit"
 
 const inbox: FastifyPluginAsync = async (fastify) => {
-  // GET /api/workspaces/:workspaceId/inbox
-  // Returns uncertain items waiting for PM review
   fastify.get<{ Params: { workspaceId: string } }>(
     "/api/workspaces/:workspaceId/inbox",
     async (request, reply) => {
@@ -19,7 +20,6 @@ const inbox: FastifyPluginAsync = async (fastify) => {
     }
   )
 
-  // GET /api/workspaces/:workspaceId/inbox/count
   fastify.get<{ Params: { workspaceId: string } }>(
     "/api/workspaces/:workspaceId/inbox/count",
     async (request, reply) => {
@@ -33,13 +33,14 @@ const inbox: FastifyPluginAsync = async (fastify) => {
     }
   )
 
-  // POST /api/workspaces/:workspaceId/inbox/:itemId/approve
   fastify.post<{ Params: { workspaceId: string; itemId: string } }>(
     "/api/workspaces/:workspaceId/inbox/:itemId/approve",
     async (request, reply) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.MEMBER)) return
+
       const { itemId } = request.params
       const item = await fastify.prisma.ingestionQueue.findUnique({
         where: { id: itemId },
@@ -53,7 +54,6 @@ const inbox: FastifyPluginAsync = async (fastify) => {
         data: { status: "APPROVED", processedAt: new Date() },
       })
 
-      // Create feedback item from approved uncertain item
       const raw = item.rawPayload as Record<string, unknown>
       await fastify.prisma.feedbackItem.create({
         data: {
@@ -67,23 +67,38 @@ const inbox: FastifyPluginAsync = async (fastify) => {
           rawPayload: item.rawPayload as object,
           status: "NEW",
         },
-      }).catch(() => null) // ignore if already exists
+      }).catch(() => null)
+
+      await writeAudit(fastify.prisma, request, {
+        entityType: "ingestion_queue",
+        entityId: itemId,
+        action: "INBOX_APPROVED",
+        metadata: { connectorId: item.connectorId, externalId: item.externalId },
+      })
 
       return { ok: true }
     }
   )
 
-  // POST /api/workspaces/:workspaceId/inbox/:itemId/reject
   fastify.post<{ Params: { workspaceId: string; itemId: string } }>(
     "/api/workspaces/:workspaceId/inbox/:itemId/reject",
     async (request, reply) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.MEMBER)) return
+
       await fastify.prisma.ingestionQueue.update({
         where: { id: request.params.itemId },
         data: { status: "REJECTED", processedAt: new Date() },
       })
+
+      await writeAudit(fastify.prisma, request, {
+        entityType: "ingestion_queue",
+        entityId: request.params.itemId,
+        action: "INBOX_REJECTED",
+      })
+
       return { ok: true }
     }
   )

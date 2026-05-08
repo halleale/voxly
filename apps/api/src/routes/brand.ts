@@ -1,5 +1,8 @@
 import type { FastifyPluginAsync } from "fastify"
 import { inferBrandProfile } from "@voxly/ai"
+import { MemberRole } from "@voxly/types"
+import { requireRole } from "../plugins/roles"
+import { writeAudit } from "../plugins/audit"
 
 interface InferBody {
   website: string
@@ -12,7 +15,6 @@ interface SaveBrandBody {
 }
 
 const brand: FastifyPluginAsync = async (fastify) => {
-  // GET /api/workspaces/:workspaceId/brand
   fastify.get<{ Params: { workspaceId: string } }>(
     "/api/workspaces/:workspaceId/brand",
     async (request, reply) => {
@@ -21,27 +23,21 @@ const brand: FastifyPluginAsync = async (fastify) => {
       }
       const workspace = await fastify.prisma.workspace.findUnique({
         where: { id: request.params.workspaceId },
-        select: {
-          brandWebsite: true,
-          brandName: true,
-          brandKeywords: true,
-          brandInferredAt: true,
-        },
+        select: { brandWebsite: true, brandName: true, brandKeywords: true, brandInferredAt: true },
       })
       if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
       return workspace
     }
   )
 
-  // POST /api/workspaces/:workspaceId/brand/infer
-  // Scrapes the website and returns inferred brand profile WITHOUT saving it.
-  // The client shows the result for user confirmation before calling PATCH.
   fastify.post<{ Params: { workspaceId: string }; Body: InferBody }>(
     "/api/workspaces/:workspaceId/brand/infer",
     async (request, reply) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.ADMIN)) return
+
       const { website } = request.body
       if (!website) return reply.code(400).send({ error: "website is required" })
 
@@ -55,14 +51,14 @@ const brand: FastifyPluginAsync = async (fastify) => {
     }
   )
 
-  // PATCH /api/workspaces/:workspaceId/brand
-  // Saves the confirmed brand profile (after user review/edit).
   fastify.patch<{ Params: { workspaceId: string }; Body: SaveBrandBody }>(
     "/api/workspaces/:workspaceId/brand",
     async (request, reply) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.ADMIN)) return
+
       const { brandWebsite, brandName, brandKeywords } = request.body
 
       const updated = await fastify.prisma.workspace.update({
@@ -73,13 +69,16 @@ const brand: FastifyPluginAsync = async (fastify) => {
           ...(brandKeywords !== undefined && { brandKeywords }),
           brandInferredAt: new Date(),
         },
-        select: {
-          brandWebsite: true,
-          brandName: true,
-          brandKeywords: true,
-          brandInferredAt: true,
-        },
+        select: { brandWebsite: true, brandName: true, brandKeywords: true, brandInferredAt: true },
       })
+
+      await writeAudit(fastify.prisma, request, {
+        entityType: "workspace",
+        entityId: request.params.workspaceId,
+        action: "WORKSPACE_UPDATED",
+        metadata: { fields: ["brand"] },
+      })
+
       return updated
     }
   )
