@@ -65,7 +65,7 @@ function InboxCard({
       <SourceIcon type={item.sourceType} />
       <div className="flex-1 min-w-0">
         <p className="text-xs text-muted-foreground mb-1">
-          {item.connector.name} · {formatAge(item.receivedAt)}
+          {item.connector.name} · {formatAge(new Date(item.receivedAt))}
         </p>
         <p className="text-sm line-clamp-3 text-foreground">{text}</p>
       </div>
