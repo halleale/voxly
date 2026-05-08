@@ -7,6 +7,9 @@ import {
   createCrmSyncQueue,
   createPollingQueue,
   createGongTranscriptQueue,
+  createSpikeAlertQueue,
+  createWeeklyBriefingQueue,
+  createRetrainQueue,
   Worker,
   QUEUE_NAMES,
   JOB_NAMES,
@@ -15,6 +18,9 @@ import {
   type ClusterThemesPayload,
   type SyncCrmPayload,
   type PollSourcePayload,
+  type SpikeAlertPayload,
+  type WeeklyBriefingPayload,
+  type RetrainClassifierPayload,
 } from "@voxly/queue"
 import {
   connectorRegistry,
@@ -32,6 +38,7 @@ import {
   scoreSentiment,
   inferSeverity,
   generateSummary,
+  generateWeeklyBriefing,
   findNearestTheme,
   nameTheme,
   type SummaryContext,
@@ -45,6 +52,9 @@ const clusterQueue = createClusterQueue(redis)
 const crmSyncQueue = createCrmSyncQueue(redis)
 const pollingQueue = createPollingQueue(redis)
 const gongTranscriptQueue = createGongTranscriptQueue(redis)
+const spikeAlertQueue = createSpikeAlertQueue(redis)
+const weeklyBriefingQueue = createWeeklyBriefingQueue(redis)
+const retrainQueue = createRetrainQueue(redis)
 
 // ─── Classifier centroid cache ────────────────────────────────────────────────
 
@@ -235,7 +245,7 @@ const aiWorker = new Worker<ProcessItemPayload>(
       if (result === "rejected") {
         await prisma.ingestionQueue.update({
           where: { id: ingestionQueueId },
-          data: { status: "REJECTED", rejectReason: `stage3:${score.toFixed(4)}`, processedAt: new Date() },
+          data: { status: "REJECTED", rejectReason: `stage3:${score.toFixed(4)}`, stage3Score: score, processedAt: new Date() },
         })
         return
       }
@@ -356,6 +366,7 @@ async function runAiPipeline(
       publishedAt:      raw.publishedAt ? new Date(raw.publishedAt as string) : new Date(),
       rawPayload:       queueItem.rawPayload ?? undefined,
       status:           "NEW",
+      pmApproved:       raw._pmApproved === true,
     },
   })
 
@@ -618,19 +629,50 @@ const clusterWorker = new Worker<ClusterThemesPayload>(
     const now = new Date()
     const day7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
     const day14 = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000)
+    const day1 = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
-    const themeIds = (
-      await prisma.theme.findMany({ where: { workspaceId }, select: { id: true } })
-    ).map((t) => t.id)
+    const themes = await prisma.theme.findMany({
+      where: { workspaceId, isProto: false },
+      select: { id: true, name: true, slug: true, isSpiking: true },
+    })
 
-    for (const themeId of themeIds) {
+    for (const theme of themes) {
       const [recent, baseline] = await Promise.all([
-        prisma.feedbackItem.count({ where: { workspaceId, themeId, ingestedAt: { gte: day7 } } }),
-        prisma.feedbackItem.count({ where: { workspaceId, themeId, ingestedAt: { gte: day14, lt: day7 } } }),
+        prisma.feedbackItem.count({ where: { workspaceId, themeId: theme.id, ingestedAt: { gte: day7 } } }),
+        prisma.feedbackItem.count({ where: { workspaceId, themeId: theme.id, ingestedAt: { gte: day14, lt: day7 } } }),
       ])
       const isSpiking = baseline > 0 ? recent >= baseline * 2 : recent >= 5
-      await prisma.theme.update({ where: { id: themeId }, data: { isSpiking } })
+      await prisma.theme.update({ where: { id: theme.id }, data: { isSpiking } })
+
+      // Create spike alert notification if newly spiking (not already spiking yesterday)
+      if (isSpiking && !theme.isSpiking) {
+        const recentNotif = await prisma.themeSpikeNotification.findFirst({
+          where: { themeId: theme.id, spikeDetectedAt: { gte: day1 } },
+        })
+        if (!recentNotif) {
+          const notif = await prisma.themeSpikeNotification.create({
+            data: { workspaceId, themeId: theme.id },
+          })
+          await spikeAlertQueue.add(
+            JOB_NAMES.SEND_SPIKE_ALERT,
+            {
+              workspaceId,
+              themeId: theme.id,
+              themeName: theme.name,
+              themeSlug: theme.slug,
+              recentCount: recent,
+              baselineCount: baseline,
+              notificationId: notif.id,
+            },
+          )
+          job.log(`Spike alert queued for theme "${theme.name}" (${recent} vs ${baseline})`)
+        }
+      }
     }
+
+    // Also enqueue weekly briefing generation and classifier retrain after clustering
+    await weeklyBriefingQueue.add(JOB_NAMES.GENERATE_WEEKLY_BRIEFING, { workspaceId })
+    await retrainQueue.add(JOB_NAMES.RETRAIN_CLASSIFIER, { workspaceId })
 
     // Clean up lone proto-themes older than 48 hours with only 1 item
     await prisma.theme.deleteMany({
@@ -858,6 +900,218 @@ const gongWorker = new Worker<IngestItemPayload>(
 
 void INGEST_GONG_CALL  // referenced for future explicit scheduling if needed
 
+// ─── Spike alert worker ───────────────────────────────────────────────────────
+
+const spikeAlertWorker = new Worker<SpikeAlertPayload>(
+  QUEUE_NAMES.SPIKE_ALERT,
+  async (job) => {
+    const { workspaceId, themeId, themeName, themeSlug, recentCount, baselineCount, notificationId } = job.data
+
+    // Find Slack connector for this workspace (any active one)
+    const slackConnector = await prisma.connector.findFirst({
+      where: { workspaceId, type: "SLACK", enabled: true, status: "ACTIVE" },
+    })
+
+    if (!slackConnector) {
+      job.log("No active Slack connector — spike alert skipped")
+      return
+    }
+
+    const config = slackConnector.configJson as { accessToken?: string; settings?: { alertChannelId?: string } }
+    const channelId = config.settings?.alertChannelId
+    if (!channelId || !config.accessToken) {
+      job.log("No Slack alert channel configured — spike alert skipped")
+      return
+    }
+
+    const delta = baselineCount > 0
+      ? `${recentCount}× last week (${baselineCount} → ${recentCount} items)`
+      : `${recentCount} new items (baseline: 0)`
+
+    const text =
+      `🔺 *Feedback spike detected* — *#${themeSlug}* (${themeName})\n` +
+      `Volume this week: ${delta}\n` +
+      `<${process.env.WEB_URL ?? "http://localhost:3000"}/dashboard/themes|View in Voxly>`
+
+    const res = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.accessToken}`,
+      },
+      body: JSON.stringify({ channel: channelId, text }),
+    })
+
+    const data = (await res.json()) as { ok: boolean; ts?: string }
+
+    await prisma.themeSpikeNotification.update({
+      where: { id: notificationId },
+      data: { slackPosted: data.ok, slackMessageTs: data.ts ?? null },
+    })
+
+    job.log(`Spike alert ${data.ok ? "sent" : "failed"} to Slack channel ${channelId}`)
+  },
+  { connection: redis, concurrency: 5 },
+)
+
+// ─── Weekly briefing worker ───────────────────────────────────────────────────
+
+const weeklyBriefingWorker = new Worker<WeeklyBriefingPayload>(
+  QUEUE_NAMES.WEEKLY_BRIEFING,
+  async (job) => {
+    const { workspaceId } = job.data
+
+    const now = new Date()
+    // Monday of the current week (UTC)
+    const dayOfWeek = now.getUTCDay()
+    const monday = new Date(now)
+    monday.setUTCDate(now.getUTCDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
+    monday.setUTCHours(0, 0, 0, 0)
+
+    // Idempotent: skip if already generated this week
+    const existing = await prisma.weeklyBriefing.findUnique({
+      where: { workspaceId_weekStarting: { workspaceId, weekStarting: monday } },
+    })
+    if (existing) {
+      job.log("Weekly briefing already generated for this week — skipping")
+      return
+    }
+
+    const weekAgo = new Date(monday.getTime() - 7 * 24 * 60 * 60 * 1000)
+    const twoWeeksAgo = new Date(monday.getTime() - 14 * 24 * 60 * 60 * 1000)
+
+    // Top themes by volume this week
+    const volumeRows = await prisma.$queryRawUnsafe<Array<{ id: string; name: string; slug: string; recent: bigint; baseline: bigint }>>(
+      `SELECT t.id, t.name, t.slug,
+              COUNT(fi.id) FILTER (WHERE fi.ingested_at >= $2) AS recent,
+              COUNT(fi.id) FILTER (WHERE fi.ingested_at >= $3 AND fi.ingested_at < $2) AS baseline
+       FROM themes t
+       LEFT JOIN feedback_items fi ON fi.theme_id = t.id AND fi.workspace_id = $1
+       WHERE t.workspace_id = $1 AND t.is_proto = false
+       GROUP BY t.id, t.name, t.slug
+       HAVING COUNT(fi.id) FILTER (WHERE fi.ingested_at >= $2) > 0
+       ORDER BY recent DESC
+       LIMIT 5`,
+      workspaceId, monday, weekAgo,
+    )
+
+    // Top themes by ARR impact (sum of customer ARR from feedback this week)
+    const arrRows = await prisma.$queryRawUnsafe<Array<{ id: string; name: string; slug: string; total_arr: bigint }>>(
+      `SELECT t.id, t.name, t.slug, COALESCE(SUM(c.arr_cents), 0) AS total_arr
+       FROM themes t
+       JOIN feedback_items fi ON fi.theme_id = t.id AND fi.workspace_id = $1
+       JOIN customers c ON c.id = fi.customer_id
+       WHERE t.workspace_id = $1 AND t.is_proto = false
+         AND fi.ingested_at >= $2 AND c.arr_cents IS NOT NULL
+       GROUP BY t.id, t.name, t.slug
+       ORDER BY total_arr DESC
+       LIMIT 3`,
+      workspaceId, monday,
+    )
+
+    // New themes this week
+    const newThemes = await prisma.theme.findMany({
+      where: { workspaceId, isProto: false, createdAt: { gte: monday } },
+      select: { id: true, name: true, slug: true, itemCount: true },
+    })
+
+    // Resolved themes this week
+    const resolvedThemes = await prisma.theme.findMany({
+      where: { workspaceId, resolvedAt: { gte: monday } },
+      select: { id: true, name: true, slug: true },
+    })
+
+    const topByVolume = volumeRows.map((r) => ({
+      themeId: r.id,
+      name: r.name,
+      slug: r.slug,
+      count: Number(r.recent),
+      delta: Number(r.recent) - Number(r.baseline),
+    }))
+
+    const topByArr = arrRows.map((r) => ({
+      themeId: r.id,
+      name: r.name,
+      slug: r.slug,
+      totalArrCents: Number(r.total_arr),
+    }))
+
+    const weekOf = monday.toISOString().slice(0, 10)
+
+    const summary = topByVolume.length > 0
+      ? await generateWeeklyBriefing({
+          weekOf,
+          topByVolume: topByVolume.map((t) => ({ name: t.name, slug: t.slug, count: t.count, delta: t.delta })),
+          topByArr: topByArr.map((t) => ({ name: t.name, slug: t.slug, totalArrCents: t.totalArrCents })),
+          newThemes: newThemes.map((t) => ({ name: t.name, slug: t.slug, itemCount: t.itemCount })),
+          resolvedThemes: resolvedThemes.map((t) => ({ name: t.name, slug: t.slug })),
+        })
+      : "No feedback activity this week."
+
+    const contentJson = { topByVolume, topByArr, newThemes, resolvedThemes, summary, weekOf }
+
+    await prisma.weeklyBriefing.create({
+      data: { workspaceId, weekStarting: monday, contentJson },
+    })
+
+    job.log(`Weekly briefing generated for week of ${weekOf}: ${topByVolume.length} themes by volume, ${topByArr.length} by ARR`)
+  },
+  { connection: redis, concurrency: 2 },
+)
+
+// ─── Classifier retrain worker ────────────────────────────────────────────────
+
+const retrainWorker = new Worker<RetrainClassifierPayload>(
+  QUEUE_NAMES.CLASSIFIER_RETRAIN,
+  async (job) => {
+    const { workspaceId } = job.data
+
+    // Fetch all PM-approved items that have embeddings
+    const approvedRows = await prisma.$queryRawUnsafe<Array<{ id: string; embedding: string }>>(
+      `SELECT id, embedding::text FROM feedback_items
+       WHERE workspace_id = $1 AND pm_approved = true AND embedding IS NOT NULL`,
+      workspaceId,
+    )
+
+    if (approvedRows.length < 5) {
+      job.log(`Only ${approvedRows.length} PM-approved items — need at least 5 to retrain. Skipping.`)
+      return
+    }
+
+    // Parse embeddings
+    const embeddings = approvedRows.map((r) => {
+      const vec = r.embedding.replace(/[\[\]]/g, "").split(",").map(Number)
+      return vec
+    })
+
+    // Load existing centroid and mix with new approvals
+    const existing = await prisma.systemConfig.findUnique({
+      where: { key: "classifier.positive_centroid" },
+    })
+
+    let allEmbeddings = embeddings
+    if (existing) {
+      const data = existing.value as { vector: number[] }
+      allEmbeddings = [data.vector, ...embeddings]
+    }
+
+    const newCentroid = computeCentroid(allEmbeddings)
+
+    await prisma.systemConfig.upsert({
+      where: { key: "classifier.positive_centroid" },
+      create: { key: "classifier.positive_centroid", value: { vector: newCentroid } },
+      update: { value: { vector: newCentroid } },
+    })
+
+    // Invalidate the in-process cache by resetting the centroid age
+    positiveCentroid = newCentroid
+    centroidLoadedAt = Date.now()
+
+    job.log(`Classifier retrained with ${approvedRows.length} PM-approved examples (total embeddings: ${allEmbeddings.length})`)
+  },
+  { connection: redis, concurrency: 1 },
+)
+
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 
 async function shutdown() {
@@ -868,6 +1122,9 @@ async function shutdown() {
   await crmSyncWorker.close()
   await pollingWorker.close()
   await gongWorker.close()
+  await spikeAlertWorker.close()
+  await weeklyBriefingWorker.close()
+  await retrainWorker.close()
   await redis.quit()
   await prisma.$disconnect()
   process.exit(0)
@@ -900,7 +1157,19 @@ gongWorker.on("failed", (job, err) => {
   console.error(`Gong extraction job ${job?.id} failed:`, err)
 })
 
+spikeAlertWorker.on("failed", (job, err) => {
+  console.error(`Spike alert job ${job?.id} failed:`, err)
+})
+
+weeklyBriefingWorker.on("failed", (job, err) => {
+  console.error(`Weekly briefing job ${job?.id} failed:`, err)
+})
+
+retrainWorker.on("failed", (job, err) => {
+  console.error(`Classifier retrain job ${job?.id} failed:`, err)
+})
+
 console.log("Voxly processor worker started")
 
-// Export queue handles for use from API (schedule nightly job, trigger CRM sync, poll)
-export { clusterQueue, crmSyncQueue, pollingQueue, gongTranscriptQueue }
+// Export queue handles for use from API
+export { clusterQueue, crmSyncQueue, pollingQueue, gongTranscriptQueue, weeklyBriefingQueue }

@@ -161,7 +161,7 @@ export async function generateSummary(
   ctx: SummaryContext,
 ): Promise<string> {
   const response = await openai.chat.completions.create({
-    model: "gpt-4o",
+    model: "gpt-4o-mini",
     messages: [
       { role: "system", content: buildSummarySystem(ctx) },
       { role: "user", content: verbatimText.slice(0, 6000) },
@@ -284,6 +284,73 @@ Given 3-10 sample feedback quotes, produce:
   - description: one sentence describing the common pattern in the feedback (max 80 words)
 
 Respond with valid JSON only: {"name":"...","slug":"...","description":"..."}`
+
+// ─── Weekly briefing (GPT-4o) ─────────────────────────────────────────────────
+
+export interface WeeklyBriefingInput {
+  weekOf: string
+  topByVolume: Array<{ name: string; slug: string; count: number; delta: number }>
+  topByArr: Array<{ name: string; slug: string; totalArrCents: number }>
+  newThemes: Array<{ name: string; slug: string; itemCount: number }>
+  resolvedThemes: Array<{ name: string; slug: string }>
+}
+
+export async function generateWeeklyBriefing(input: WeeklyBriefingInput): Promise<string> {
+  const fmtArr = (cents: number) => `$${Math.round(cents / 100).toLocaleString()}`
+
+  const lines: string[] = [`Week of ${input.weekOf}`, ""]
+
+  if (input.topByVolume.length > 0) {
+    lines.push("Top themes by volume:")
+    for (const t of input.topByVolume) {
+      const arrow = t.delta > 0 ? `+${t.delta}` : t.delta < 0 ? `${t.delta}` : "no change"
+      lines.push(`  #${t.slug} "${t.name}" — ${t.count} items (${arrow} vs prior week)`)
+    }
+    lines.push("")
+  }
+
+  if (input.topByArr.length > 0) {
+    lines.push("Top themes by ARR impact:")
+    for (const t of input.topByArr) {
+      lines.push(`  #${t.slug} "${t.name}" — ${fmtArr(t.totalArrCents)} ARR affected`)
+    }
+    lines.push("")
+  }
+
+  if (input.newThemes.length > 0) {
+    lines.push("New themes this week:")
+    for (const t of input.newThemes) {
+      lines.push(`  #${t.slug} "${t.name}" (${t.itemCount} items)`)
+    }
+    lines.push("")
+  }
+
+  if (input.resolvedThemes.length > 0) {
+    lines.push("Resolved:")
+    for (const t of input.resolvedThemes) {
+      lines.push(`  #${t.slug} "${t.name}"`)
+    }
+    lines.push("")
+  }
+
+  const prompt = lines.join("\n")
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a product intelligence assistant. Write a 3-4 sentence executive summary of the weekly feedback briefing below. Be specific and actionable — name actual theme names, call out anomalies, and surface what needs attention. No bullet points.",
+      },
+      { role: "user", content: prompt },
+    ],
+    temperature: 0.4,
+    max_tokens: 200,
+  })
+
+  return response.choices[0]?.message.content?.trim() ?? ""
+}
 
 export async function nameTheme(samples: string[]): Promise<ThemeNameResult> {
   const joined = samples

@@ -92,13 +92,14 @@ model Workspace {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  members       WorkspaceMember[]
-  connectors    Connector[]
-  feedbackItems FeedbackItem[]
-  customers     Customer[]
-  themes        Theme[]
-  views         View[]
-  workflows     Workflow[]
+  members          WorkspaceMember[]
+  connectors       Connector[]
+  feedbackItems    FeedbackItem[]
+  customers        Customer[]
+  themes           Theme[]
+  views            View[]
+  workflows        Workflow[]
+  weeklyBriefings  WeeklyBriefing[]
 
   @@map("workspaces")
 }
@@ -153,6 +154,7 @@ model IngestionQueue {
   receivedAt   DateTime        @default(now()) @map("received_at")
   status       IngestionStatus @default(PENDING)
   rejectReason String?         @map("reject_reason")
+  stage3Score  Float?          @map("stage3_score")
   processedAt  DateTime?       @map("processed_at")
 
   connector Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
@@ -191,6 +193,8 @@ model FeedbackItem {
   ingestedAt       DateTime       @default(now()) @map("ingested_at")
   relevanceScore   Float?         @map("relevance_score")
   rawPayload       Json?          @map("raw_payload")
+  /// Set true when a PM manually approved this item from the borderline inbox
+  pmApproved       Boolean        @default(false) @map("pm_approved")
   /// Embedding vector — written via raw SQL ($executeRaw with pgvector)
   /// Type omitted from Prisma model; column created by migration SQL
 
@@ -243,12 +247,15 @@ model Theme {
   /// Proto-themes await the nightly HDBSCAN run before receiving a real name
   isProto      Boolean   @default(false) @map("is_proto")
   isSpiking    Boolean   @default(false) @map("is_spiking")
+  resolvedAt   DateTime? @map("resolved_at")
   createdAt    DateTime  @default(now()) @map("created_at")
   lastActiveAt DateTime? @map("last_active_at")
   /// Centroid vector — written via raw SQL ($executeRaw with pgvector)
 
-  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  feedbackItems FeedbackItem[]
+  workspace          Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  feedbackItems      FeedbackItem[]
+  outcomes           ThemeOutcome[]
+  spikeNotifications ThemeSpikeNotification[]
 
   @@unique([workspaceId, slug])
   @@index([workspaceId])
@@ -336,4 +343,56 @@ model SystemConfig {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("system_config")
+}
+
+/// Created when isSpiking flips true — prevents duplicate alerts within 24h.
+model ThemeSpikeNotification {
+  id              String   @id @default(cuid())
+  workspaceId     String   @map("workspace_id")
+  themeId         String   @map("theme_id")
+  spikeDetectedAt DateTime @default(now()) @map("spike_detected_at")
+  slackPosted     Boolean  @default(false) @map("slack_posted")
+  slackMessageTs  String?  @map("slack_message_ts")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  theme Theme @relation(fields: [themeId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, spikeDetectedAt(sort: Desc)])
+  @@map("theme_spike_notifications")
+}
+
+/// Stores the generated weekly briefing for each workspace-week pair.
+model WeeklyBriefing {
+  id             String    @id @default(cuid())
+  workspaceId    String    @map("workspace_id")
+  weekStarting   DateTime  @map("week_starting")
+  contentJson    Json      @map("content_json")
+  slackChannelId String?   @map("slack_channel_id")
+  deliveredAt    DateTime? @map("delivered_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, weekStarting])
+  @@index([workspaceId])
+  @@map("weekly_briefings")
+}
+
+/// Links a theme to a shipped feature/ticket — closes the feedback-to-outcome loop.
+model ThemeOutcome {
+  id          String         @id @default(cuid())
+  workspaceId String         @map("workspace_id")
+  themeId     String         @map("theme_id")
+  provider    TicketProvider
+  ticketId    String         @map("ticket_id")
+  ticketUrl   String         @map("ticket_url")
+  ticketTitle String?        @map("ticket_title")
+  resolvedAt  DateTime?      @map("resolved_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  theme Theme @relation(fields: [themeId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([themeId])
+  @@map("theme_outcomes")
 }

@@ -4,22 +4,28 @@ import IORedis from "ioredis"
 // ─── Queue names ──────────────────────────────────────────────────────────────
 
 export const QUEUE_NAMES = {
-  INGESTION:       "ingestion",
-  AI_PIPELINE:     "ai-pipeline",
-  POLLING:         "polling",
-  NIGHTLY_CLUSTER: "nightly-cluster",
-  CRM_SYNC:        "crm-sync",
-  GONG_TRANSCRIPT: "gong-transcript",
+  INGESTION:          "ingestion",
+  AI_PIPELINE:        "ai-pipeline",
+  POLLING:            "polling",
+  NIGHTLY_CLUSTER:    "nightly-cluster",
+  CRM_SYNC:           "crm-sync",
+  GONG_TRANSCRIPT:    "gong-transcript",
+  SPIKE_ALERT:        "spike-alert",
+  WEEKLY_BRIEFING:    "weekly-briefing",
+  CLASSIFIER_RETRAIN: "classifier-retrain",
 } as const
 
 // ─── Job names ────────────────────────────────────────────────────────────────
 
 export const JOB_NAMES = {
-  INGEST_ITEM:     "INGEST_ITEM",
-  PROCESS_ITEM:    "PROCESS_ITEM",
-  POLL_SOURCE:     "POLL_SOURCE",
-  CLUSTER_THEMES:  "CLUSTER_THEMES",
-  SYNC_CRM:        "SYNC_CRM",
+  INGEST_ITEM:              "INGEST_ITEM",
+  PROCESS_ITEM:             "PROCESS_ITEM",
+  POLL_SOURCE:              "POLL_SOURCE",
+  CLUSTER_THEMES:           "CLUSTER_THEMES",
+  SYNC_CRM:                 "SYNC_CRM",
+  SEND_SPIKE_ALERT:         "SEND_SPIKE_ALERT",
+  GENERATE_WEEKLY_BRIEFING: "GENERATE_WEEKLY_BRIEFING",
+  RETRAIN_CLASSIFIER:       "RETRAIN_CLASSIFIER",
 } as const
 
 // ─── Job payload types ────────────────────────────────────────────────────────
@@ -47,6 +53,24 @@ export interface ClusterThemesPayload {
 
 export interface SyncCrmPayload {
   connectorId: string
+  workspaceId: string
+}
+
+export interface SpikeAlertPayload {
+  workspaceId: string
+  themeId: string
+  themeName: string
+  themeSlug: string
+  recentCount: number
+  baselineCount: number
+  notificationId: string
+}
+
+export interface WeeklyBriefingPayload {
+  workspaceId: string
+}
+
+export interface RetrainClassifierPayload {
   workspaceId: string
 }
 
@@ -82,6 +106,18 @@ export function createCrmSyncQueue(connection: ConnectionOptions) {
 
 export function createGongTranscriptQueue(connection: ConnectionOptions) {
   return new Queue<IngestItemPayload>(QUEUE_NAMES.GONG_TRANSCRIPT, { connection })
+}
+
+export function createSpikeAlertQueue(connection: ConnectionOptions) {
+  return new Queue<SpikeAlertPayload>(QUEUE_NAMES.SPIKE_ALERT, { connection })
+}
+
+export function createWeeklyBriefingQueue(connection: ConnectionOptions) {
+  return new Queue<WeeklyBriefingPayload>(QUEUE_NAMES.WEEKLY_BRIEFING, { connection })
+}
+
+export function createRetrainQueue(connection: ConnectionOptions) {
+  return new Queue<RetrainClassifierPayload>(QUEUE_NAMES.CLASSIFIER_RETRAIN, { connection })
 }
 
 export { Worker, Queue }

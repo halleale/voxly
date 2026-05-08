@@ -143,6 +143,157 @@ const themes: FastifyPluginAsync = async (fastify) => {
     },
   )
 
+  // ── Time-series: item volume per theme over N days ────────────────────────
+  fastify.get<{
+    Params: { workspaceId: string; themeId: string }
+    Querystring: { days?: string }
+  }>(
+    "/api/workspaces/:workspaceId/themes/:themeId/timeseries",
+    async (request, reply) => {
+      if (request.params.workspaceId !== request.workspaceId) {
+        return reply.code(403).send({ error: "Forbidden" })
+      }
+      const days = Math.min(90, Math.max(7, parseInt(request.query.days ?? "30", 10)))
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+
+      const rows = await fastify.prisma.$queryRawUnsafe<Array<{ date: string; count: bigint }>>(
+        `SELECT DATE_TRUNC('day', ingested_at AT TIME ZONE 'UTC')::date::text AS date,
+                COUNT(*) AS count
+         FROM feedback_items
+         WHERE workspace_id = $1 AND theme_id = $2 AND ingested_at >= $3
+         GROUP BY 1
+         ORDER BY 1`,
+        request.workspaceId,
+        request.params.themeId,
+        since,
+      )
+
+      return { data: rows.map((r) => ({ date: r.date, count: Number(r.count) })) }
+    },
+  )
+
+  // ── ARR impact: top themes by total customer ARR from feedback ────────────
+  fastify.get<{
+    Params: { workspaceId: string }
+    Querystring: { days?: string; limit?: string }
+  }>(
+    "/api/workspaces/:workspaceId/themes/arr-impact",
+    async (request, reply) => {
+      if (request.params.workspaceId !== request.workspaceId) {
+        return reply.code(403).send({ error: "Forbidden" })
+      }
+      const days = Math.min(90, Math.max(7, parseInt(request.query.days ?? "30", 10)))
+      const limit = Math.min(20, Math.max(1, parseInt(request.query.limit ?? "10", 10)))
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+
+      const rows = await fastify.prisma.$queryRawUnsafe<Array<{
+        id: string; name: string; slug: string; item_count: bigint; total_arr: bigint
+      }>>(
+        `SELECT t.id, t.name, t.slug,
+                COUNT(DISTINCT fi.id) AS item_count,
+                COALESCE(SUM(DISTINCT c.arr_cents), 0) AS total_arr
+         FROM themes t
+         JOIN feedback_items fi ON fi.theme_id = t.id AND fi.workspace_id = $1
+         JOIN customers c ON c.id = fi.customer_id
+         WHERE t.workspace_id = $1 AND t.is_proto = false
+           AND fi.ingested_at >= $2 AND c.arr_cents IS NOT NULL
+         GROUP BY t.id, t.name, t.slug
+         ORDER BY total_arr DESC
+         LIMIT $3`,
+        request.workspaceId,
+        since,
+        limit,
+      )
+
+      return {
+        data: rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          itemCount: Number(r.item_count),
+          totalArrCents: Number(r.total_arr),
+        })),
+      }
+    },
+  )
+
+  // ── Resolve theme (mark resolved, transition all items to RESOLVED) ────────
+  fastify.post<{ Params: { workspaceId: string; themeId: string } }>(
+    "/api/workspaces/:workspaceId/themes/:themeId/resolve",
+    async (request, reply) => {
+      if (request.params.workspaceId !== request.workspaceId) {
+        return reply.code(403).send({ error: "Forbidden" })
+      }
+
+      const existing = await fastify.prisma.theme.findFirst({
+        where: { id: request.params.themeId, workspaceId: request.workspaceId },
+      })
+      if (!existing) return reply.code(404).send({ error: "Theme not found" })
+
+      const now = new Date()
+      const [theme, { count }] = await Promise.all([
+        fastify.prisma.theme.update({
+          where: { id: request.params.themeId },
+          data: { resolvedAt: now, isSpiking: false },
+        }),
+        fastify.prisma.feedbackItem.updateMany({
+          where: { themeId: request.params.themeId, workspaceId: request.workspaceId, status: { notIn: ["ARCHIVED"] } },
+          data: { status: "RESOLVED" },
+        }),
+      ])
+
+      return { resolved: true, theme, itemsResolved: count }
+    },
+  )
+
+  // ── Link theme outcome (associate with shipped ticket) ────────────────────
+  fastify.post<{
+    Params: { workspaceId: string; themeId: string }
+    Body: { provider: "LINEAR" | "JIRA"; ticketId: string; ticketUrl: string; ticketTitle?: string }
+  }>(
+    "/api/workspaces/:workspaceId/themes/:themeId/outcome",
+    async (request, reply) => {
+      if (request.params.workspaceId !== request.workspaceId) {
+        return reply.code(403).send({ error: "Forbidden" })
+      }
+
+      const existing = await fastify.prisma.theme.findFirst({
+        where: { id: request.params.themeId, workspaceId: request.workspaceId },
+      })
+      if (!existing) return reply.code(404).send({ error: "Theme not found" })
+
+      const outcome = await fastify.prisma.themeOutcome.create({
+        data: {
+          workspaceId: request.workspaceId,
+          themeId: request.params.themeId,
+          provider: request.body.provider,
+          ticketId: request.body.ticketId,
+          ticketUrl: request.body.ticketUrl,
+          ticketTitle: request.body.ticketTitle ?? null,
+        },
+      })
+
+      return outcome
+    },
+  )
+
+  // ── Get theme outcomes ─────────────────────────────────────────────────────
+  fastify.get<{ Params: { workspaceId: string; themeId: string } }>(
+    "/api/workspaces/:workspaceId/themes/:themeId/outcomes",
+    async (request, reply) => {
+      if (request.params.workspaceId !== request.workspaceId) {
+        return reply.code(403).send({ error: "Forbidden" })
+      }
+
+      const outcomes = await fastify.prisma.themeOutcome.findMany({
+        where: { themeId: request.params.themeId, workspaceId: request.workspaceId },
+        orderBy: { createdAt: "desc" },
+      })
+
+      return { data: outcomes }
+    },
+  )
+
   // ── Trigger nightly clustering (admin / scheduled) ─────────────────────────
   fastify.post<{ Params: { workspaceId: string } }>(
     "/api/workspaces/:workspaceId/themes/cluster",
