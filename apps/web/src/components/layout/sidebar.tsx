@@ -16,6 +16,7 @@ import {
   Building2,
   Zap,
   PlugZap,
+  BarChart3,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { Connector } from "@voxly/db"
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { label: "Sources",    href: "/dashboard/connectors", icon: PlugZap },
   { label: "Themes",     href: "/dashboard/themes",     icon: Tag },
   { label: "Workflows",  href: "/dashboard/workflows",  icon: GitBranch },
+  { label: "Analytics",  href: "/dashboard/analytics",  icon: BarChart3 },
 ]
 
 interface SidebarProps {

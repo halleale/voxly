@@ -92,6 +92,9 @@ model Workspace {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
+  /// WorkOS SSO connection ID for SAML/enterprise SSO
+  workosConnectionId String? @map("workos_connection_id")
+
   members          WorkspaceMember[]
   connectors       Connector[]
   feedbackItems    FeedbackItem[]
@@ -100,6 +103,7 @@ model Workspace {
   views            View[]
   workflows        Workflow[]
   weeklyBriefings  WeeklyBriefing[]
+  auditLogs        AuditLog[]
 
   @@map("workspaces")
 }
@@ -376,6 +380,23 @@ model WeeklyBriefing {
   @@unique([workspaceId, weekStarting])
   @@index([workspaceId])
   @@map("weekly_briefings")
+}
+
+/// Immutable record of every user action for compliance and debugging.
+model AuditLog {
+  id           String   @id @default(cuid())
+  workspaceId  String   @map("workspace_id")
+  userId       String   @map("user_id")
+  action       String
+  resourceType String   @map("resource_type")
+  resourceId   String   @map("resource_id")
+  meta         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("audit_logs")
 }
 
 /// Links a theme to a shipped feature/ticket — closes the feedback-to-outcome loop.

@@ -211,11 +211,11 @@ type WorkflowNode =
 
 **Done when:** A PM can install "Enterprise Critical Alert", configure their Slack channel, and receive a Slack notification within 60 seconds of an enterprise feedback item arriving.
 
-### Chunk 9 — Intelligence Layer (Weeks 19–21)
+### ✅ Chunk 9 — Intelligence Layer (complete)
 Themes dashboard with time-series, spike alerts, weekly briefing (GPT-4o), Reddit connector, feedback-to-outcome tracking, classifier improvement loop.
 
-### Chunk 10 — Platform & Enterprise (Weeks 22–26)
-Public ingestion API, SAML SSO (WorkOS), RBAC, audit log, Notion/Confluence export, Salesforce connector, multi-workspace, usage analytics.
+### ✅ Chunk 10 — Platform & Enterprise (complete)
+Public ingestion API (POST /api/v1/feedback + API key auth), RBAC (OWNER/ADMIN/MEMBER/VIEWER) with requireRole prehandler, audit log (fire-and-forget), WorkOS SAML SSO integration, Salesforce connector (OAuth + CRM sync), Notion export (themes → Notion pages), usage analytics dashboard (connector health, actioned rate, workflow success), settings page (API key management, member roles, SSO info), Analytics nav item.
 
 ## Critical Path
 

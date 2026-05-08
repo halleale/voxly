@@ -17,6 +17,7 @@ export { gongConnector, verifyGongSignature } from "./gong"
 export { cannyConnector, verifyCannySignature } from "./canny"
 export { hnConnector } from "./hn"
 export { redditConnector } from "./reddit"
+export { salesforceConnector, fetchSalesforceAccounts, exchangeSalesforceCode } from "./salesforce"
 export {
   jiraConnector,
   fetchJiraCloudId,
@@ -41,20 +42,22 @@ import { gongConnector } from "./gong"
 import { cannyConnector } from "./canny"
 import { hnConnector } from "./hn"
 import { redditConnector } from "./reddit"
+import { salesforceConnector } from "./salesforce"
 import { jiraConnector } from "./jira"
 import { SourceType } from "@voxly/types"
 
 /** Registry: look up a connector adapter by source type. */
 export const connectorRegistry: Record<string, ConnectorAdapter> = {
-  [SourceType.SLACK]:     slackConnector,
-  [SourceType.INTERCOM]:  intercomConnector,
-  [SourceType.HUBSPOT]:   hubspotConnector,
-  [SourceType.LINEAR]:    linearConnector,
-  [SourceType.ZENDESK]:   zendeskConnector,
-  [SourceType.G2]:        g2Connector,
-  [SourceType.GONG]:      gongConnector,
-  [SourceType.CANNY]:     cannyConnector,
-  [SourceType.HN]:        hnConnector,
-  [SourceType.REDDIT]:    redditConnector,
-  [SourceType.JIRA]:      jiraConnector,
+  [SourceType.SLACK]:       slackConnector,
+  [SourceType.INTERCOM]:    intercomConnector,
+  [SourceType.HUBSPOT]:     hubspotConnector,
+  [SourceType.LINEAR]:      linearConnector,
+  [SourceType.ZENDESK]:     zendeskConnector,
+  [SourceType.G2]:          g2Connector,
+  [SourceType.GONG]:        gongConnector,
+  [SourceType.CANNY]:       cannyConnector,
+  [SourceType.HN]:          hnConnector,
+  [SourceType.REDDIT]:      redditConnector,
+  [SourceType.SALESFORCE]:  salesforceConnector,
+  [SourceType.JIRA]:        jiraConnector,
 }
