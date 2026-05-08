@@ -7,6 +7,7 @@ import {
   createCrmSyncQueue,
   createPollingQueue,
   createGongTranscriptQueue,
+  createWorkflowExecutionQueue,
   Worker,
   QUEUE_NAMES,
   JOB_NAMES,
@@ -15,6 +16,7 @@ import {
   type ClusterThemesPayload,
   type SyncCrmPayload,
   type PollSourcePayload,
+  type ExecuteWorkflowPayload,
 } from "@voxly/queue"
 import {
   connectorRegistry,
@@ -22,6 +24,8 @@ import {
   stage2SourceFilter,
   fetchHubSpotCompanies,
   gongConnector,
+  createLinearIssue,
+  buildLinearIssueBody,
 } from "@voxly/connectors"
 import {
   embed,
@@ -36,7 +40,7 @@ import {
   nameTheme,
   type SummaryContext,
 } from "@voxly/ai"
-import type { ConnectorConfig, NormalizedFeedback } from "@voxly/types"
+import type { ConnectorConfig, NormalizedFeedback, WorkflowGraph, WorkflowNode, FilterClause } from "@voxly/types"
 
 const redis = createRedisConnection()
 const ingestionQueue = createIngestionQueue(redis)
@@ -45,6 +49,7 @@ const clusterQueue = createClusterQueue(redis)
 const crmSyncQueue = createCrmSyncQueue(redis)
 const pollingQueue = createPollingQueue(redis)
 const gongTranscriptQueue = createGongTranscriptQueue(redis)
+const workflowQueue = createWorkflowExecutionQueue(redis)
 
 // ─── Classifier centroid cache ────────────────────────────────────────────────
 
@@ -395,6 +400,20 @@ async function runAiPipeline(
   ])
 
   job.log(`FeedbackItem created: ${feedbackItem.id}`)
+
+  // Trigger all active workflows for this workspace
+  const activeWorkflows = await prisma.workflow.findMany({
+    where: { workspaceId, isActive: true },
+    select: { id: true },
+  })
+  for (const wf of activeWorkflows) {
+    await workflowQueue.add("EXECUTE_WORKFLOW", {
+      workflowId: wf.id,
+      workspaceId,
+      feedbackItemId: feedbackItem.id,
+    })
+  }
+  if (activeWorkflows.length > 0) job.log(`Enqueued ${activeWorkflows.length} workflow(s) for item ${feedbackItem.id}`)
 }
 
 // ─── Proto-theme creation ─────────────────────────────────────────────────────
@@ -858,6 +877,300 @@ const gongWorker = new Worker<IngestItemPayload>(
 
 void INGEST_GONG_CALL  // referenced for future explicit scheduling if needed
 
+// ─── Workflow execution engine ────────────────────────────────────────────────
+
+type FeedbackItemWithRelations = Awaited<ReturnType<typeof prisma.feedbackItem.findUniqueOrThrow>>
+  & { customer?: { id: string; tier: string | null; arrCents: number | null } | null }
+  & { theme?: { id: string; slug: string; name: string } | null }
+
+/** Evaluate a single filter clause against a feedback item */
+function evaluateClause(clause: FilterClause, item: FeedbackItemWithRelations): boolean {
+  const { field, operator, value } = clause
+
+  function resolveField(f: string): unknown {
+    if (f === "theme_id")        return item.themeId
+    if (f === "status")          return item.status
+    if (f === "severity")        return item.severity
+    if (f === "sourceType")      return item.sourceType
+    if (f === "sentiment")       return item.sentiment
+    if (f === "customer.tier")   return item.customer?.tier
+    if (f === "customer.arrCents") return item.customer?.arrCents
+    return undefined
+  }
+
+  const actual = resolveField(field)
+
+  switch (operator) {
+    case "eq":        return actual === value
+    case "neq":       return actual !== value
+    case "in":        return Array.isArray(value) && value.includes(actual)
+    case "nin":       return Array.isArray(value) && !value.includes(actual)
+    case "gt":        return typeof actual === "number" && typeof value === "number" && actual > value
+    case "gte":       return typeof actual === "number" && typeof value === "number" && actual >= value
+    case "lt":        return typeof actual === "number" && typeof value === "number" && actual < value
+    case "lte":       return typeof actual === "number" && typeof value === "number" && actual <= value
+    case "contains":  return typeof actual === "string" && typeof value === "string" && actual.includes(value)
+    case "is_null":   return actual == null
+    case "is_not_null": return actual != null
+    default:          return false
+  }
+}
+
+/** Topological sort of workflow nodes via DFS */
+function topoSort(graph: WorkflowGraph): WorkflowNode[] {
+  const nodeMap = new Map(graph.nodes.map((n) => [n.id, n]))
+  const adjacency = new Map<string, string[]>()
+  for (const node of graph.nodes) adjacency.set(node.id, [])
+  for (const edge of graph.edges) {
+    adjacency.get(edge.source)?.push(edge.target)
+  }
+
+  const visited = new Set<string>()
+  const result: WorkflowNode[] = []
+
+  function dfs(id: string) {
+    if (visited.has(id)) return
+    visited.add(id)
+    for (const neighborId of adjacency.get(id) ?? []) dfs(neighborId)
+    const node = nodeMap.get(id)
+    if (node) result.unshift(node)
+  }
+
+  // Start from trigger nodes
+  for (const node of graph.nodes) {
+    if (node.type === "trigger") dfs(node.id)
+  }
+  // Pick up any unreachable nodes (shouldn't happen in a well-formed graph)
+  for (const node of graph.nodes) dfs(node.id)
+
+  return result
+}
+
+/** Execute a single workflow against a feedback item, returning per-node step log */
+async function executeWorkflowGraph(
+  workflowId: string,
+  workspaceId: string,
+  feedbackItemId: string,
+  job: { log: (msg: string) => void },
+): Promise<{ steps: Record<string, unknown>; passed: boolean }> {
+  const wf = await prisma.workflow.findFirst({ where: { id: workflowId, workspaceId } })
+  if (!wf) throw new Error(`Workflow ${workflowId} not found`)
+
+  const item = await prisma.feedbackItem.findUnique({
+    where: { id: feedbackItemId },
+    include: { customer: true, theme: true },
+  }) as FeedbackItemWithRelations | null
+  if (!item) throw new Error(`FeedbackItem ${feedbackItemId} not found`)
+
+  const graph = wf.graphJson as unknown as WorkflowGraph
+  const ordered = topoSort(graph)
+  const steps: Record<string, { nodeType: string; result: "pass" | "skip" | "fail"; detail?: unknown }> = {}
+  let active = true
+
+  for (const node of ordered) {
+    if (!active) {
+      steps[node.id] = { nodeType: node.type, result: "skip" }
+      continue
+    }
+
+    job.log(`Evaluating node ${node.id} (${node.type})`)
+
+    if (node.type === "trigger") {
+      // Trigger is always satisfied when the engine runs
+      steps[node.id] = { nodeType: "trigger", result: "pass" }
+      continue
+    }
+
+    if (node.type === "filter") {
+      const { logic, clauses } = node.data
+      const results = clauses.map((c: FilterClause) => evaluateClause(c, item))
+      const passed = logic === "AND" ? results.every(Boolean) : results.some(Boolean)
+      steps[node.id] = { nodeType: "filter", result: passed ? "pass" : "fail", detail: { clauses, results } }
+      if (!passed) {
+        active = false
+        job.log(`Filter node ${node.id} did not match — stopping chain`)
+      }
+      continue
+    }
+
+    if (node.type === "enrich") {
+      const enrichments: string[] = node.data.enrichments ?? []
+      const enrichDetail: Record<string, unknown> = {}
+
+      if (enrichments.includes("sentiment") && item.sentiment == null) {
+        const newSentiment = await scoreSentiment(item.verbatimText)
+        await prisma.feedbackItem.update({ where: { id: item.id }, data: { sentiment: newSentiment } })
+        enrichDetail.sentiment = newSentiment
+      }
+      if (enrichments.includes("severity") && item.severity == null) {
+        const newSeverity = await inferSeverity(item.verbatimText, item.customer?.tier ?? undefined)
+        await prisma.feedbackItem.update({ where: { id: item.id }, data: { severity: newSeverity } })
+        enrichDetail.severity = newSeverity
+      }
+      if (enrichments.includes("crm") && !item.customerId && item.authorEmail) {
+        const domain = item.authorEmail.split("@")[1]
+        if (domain) {
+          const customer = await prisma.customer.findFirst({ where: { workspaceId, domain } })
+          if (customer) {
+            await prisma.feedbackItem.update({ where: { id: item.id }, data: { customerId: customer.id } })
+            enrichDetail.customer = customer.name
+          }
+        }
+      }
+      steps[node.id] = { nodeType: "enrich", result: "pass", detail: enrichDetail }
+      continue
+    }
+
+    if (node.type === "action") {
+      const { action, config } = node.data
+      const cfg = config as Record<string, unknown>
+
+      try {
+        if (action === "assign") {
+          const userId = cfg.userId as string | undefined
+          if (userId) {
+            await prisma.feedbackItem.update({ where: { id: item.id }, data: { assigneeId: userId } })
+            steps[node.id] = { nodeType: "action", result: "pass", detail: { action: "assign", userId } }
+          } else {
+            steps[node.id] = { nodeType: "action", result: "fail", detail: "no userId in config" }
+          }
+        } else if (action === "create_ticket") {
+          const provider = (cfg.provider as string) ?? "linear"
+          if (provider === "linear") {
+            const linearConnector = await prisma.connector.findFirst({
+              where: { workspaceId, type: "LINEAR", enabled: true },
+            })
+            if (linearConnector) {
+              const lCfg = linearConnector.configJson as { accessToken?: string; settings?: { defaultTeamId?: string } }
+              if (lCfg.accessToken && lCfg.settings?.defaultTeamId) {
+                const issue = await createLinearIssue({
+                  accessToken: lCfg.accessToken,
+                  teamId: lCfg.settings.defaultTeamId,
+                  title: item.extractedSummary?.slice(0, 120) ?? item.verbatimText.slice(0, 120),
+                  description: buildLinearIssueBody(item as Parameters<typeof buildLinearIssueBody>[0]),
+                })
+                await prisma.linkedTicket.create({
+                  data: {
+                    workspaceId,
+                    feedbackItemId: item.id,
+                    provider: "LINEAR",
+                    ticketId: issue.id,
+                    ticketUrl: issue.url,
+                    ticketTitle: issue.title,
+                    ticketStatus: issue.state?.name ?? "Todo",
+                  },
+                })
+                steps[node.id] = { nodeType: "action", result: "pass", detail: { issue: issue.identifier } }
+              } else {
+                steps[node.id] = { nodeType: "action", result: "fail", detail: "Linear connector missing token or teamId" }
+              }
+            } else {
+              steps[node.id] = { nodeType: "action", result: "fail", detail: "No Linear connector configured" }
+            }
+          } else {
+            steps[node.id] = { nodeType: "action", result: "skip", detail: `unsupported provider: ${provider}` }
+          }
+        } else if (action === "slack_post") {
+          const channel = cfg.channel as string | undefined
+          const slackConnectorRow = await prisma.connector.findFirst({
+            where: { workspaceId, type: "SLACK", enabled: true },
+          })
+          if (slackConnectorRow && channel) {
+            const sCfg = slackConnectorRow.configJson as { accessToken?: string }
+            if (sCfg.accessToken) {
+              const text = (cfg.template as string | undefined)?.replace("{{summary}}", item.extractedSummary ?? item.verbatimText.slice(0, 200))
+                ?? `New feedback: ${item.extractedSummary ?? item.verbatimText.slice(0, 200)}`
+
+              const res = await fetch("https://slack.com/api/chat.postMessage", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${sCfg.accessToken}` },
+                body: JSON.stringify({ channel, text }),
+              })
+              const body = await res.json() as { ok: boolean; error?: string }
+              steps[node.id] = {
+                nodeType: "action",
+                result: body.ok ? "pass" : "fail",
+                detail: body.ok ? { channel } : body.error,
+              }
+            } else {
+              steps[node.id] = { nodeType: "action", result: "fail", detail: "Slack connector missing token" }
+            }
+          } else {
+            steps[node.id] = { nodeType: "action", result: "fail", detail: "No Slack connector or channel configured" }
+          }
+        } else if (action === "webhook") {
+          const url = cfg.url as string | undefined
+          if (url) {
+            const res = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ feedbackItemId: item.id, workspaceId, workflowId }),
+            })
+            steps[node.id] = { nodeType: "action", result: res.ok ? "pass" : "fail", detail: { status: res.status } }
+          } else {
+            steps[node.id] = { nodeType: "action", result: "fail", detail: "no url in config" }
+          }
+        } else {
+          steps[node.id] = { nodeType: "action", result: "skip", detail: `unknown action: ${action}` }
+        }
+      } catch (err) {
+        steps[node.id] = { nodeType: "action", result: "fail", detail: String(err) }
+      }
+      continue
+    }
+  }
+
+  const allPassed = Object.values(steps).every((s) => s.result !== "fail")
+  return { steps, passed: allPassed }
+}
+
+const workflowWorker = new Worker<ExecuteWorkflowPayload>(
+  QUEUE_NAMES.WORKFLOW_EXECUTION,
+  async (job) => {
+    const { workflowId, workspaceId, feedbackItemId, testRun } = job.data
+    job.log(`Executing workflow ${workflowId} for item ${feedbackItemId} (testRun=${testRun ?? false})`)
+
+    let runRecord: { id: string } | null = null
+
+    if (!testRun) {
+      runRecord = await prisma.workflowRun.create({
+        data: { workflowId, feedbackItemId, status: "RUNNING" },
+      })
+    }
+
+    try {
+      const { steps, passed } = await executeWorkflowGraph(workflowId, workspaceId, feedbackItemId, job)
+
+      if (!testRun && runRecord) {
+        await prisma.workflowRun.update({
+          where: { id: runRecord.id },
+          data: {
+            status: passed ? "COMPLETED" : "FAILED",
+            completedAt: new Date(),
+            stepsJson: steps,
+          },
+        })
+        await prisma.workflow.update({
+          where: { id: workflowId },
+          data: { lastRunAt: new Date(), runCount: { increment: 1 } },
+        })
+      }
+
+      job.log(`Workflow ${workflowId} ${passed ? "completed" : "failed"}`)
+      return { steps, passed }
+    } catch (err) {
+      if (!testRun && runRecord) {
+        await prisma.workflowRun.update({
+          where: { id: runRecord.id },
+          data: { status: "FAILED", completedAt: new Date(), stepsJson: { error: String(err) } },
+        })
+      }
+      throw err
+    }
+  },
+  { connection: redis, concurrency: 10 },
+)
+
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 
 async function shutdown() {
@@ -868,6 +1181,7 @@ async function shutdown() {
   await crmSyncWorker.close()
   await pollingWorker.close()
   await gongWorker.close()
+  await workflowWorker.close()
   await redis.quit()
   await prisma.$disconnect()
   process.exit(0)
@@ -900,7 +1214,11 @@ gongWorker.on("failed", (job, err) => {
   console.error(`Gong extraction job ${job?.id} failed:`, err)
 })
 
+workflowWorker.on("failed", (job, err) => {
+  console.error(`Workflow execution job ${job?.id} failed:`, err)
+})
+
 console.log("Voxly processor worker started")
 
 // Export queue handles for use from API (schedule nightly job, trigger CRM sync, poll)
-export { clusterQueue, crmSyncQueue, pollingQueue, gongTranscriptQueue }
+export { clusterQueue, crmSyncQueue, pollingQueue, gongTranscriptQueue, workflowQueue }

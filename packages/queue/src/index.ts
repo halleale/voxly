@@ -4,22 +4,24 @@ import IORedis from "ioredis"
 // ─── Queue names ──────────────────────────────────────────────────────────────
 
 export const QUEUE_NAMES = {
-  INGESTION:       "ingestion",
-  AI_PIPELINE:     "ai-pipeline",
-  POLLING:         "polling",
-  NIGHTLY_CLUSTER: "nightly-cluster",
-  CRM_SYNC:        "crm-sync",
-  GONG_TRANSCRIPT: "gong-transcript",
+  INGESTION:          "ingestion",
+  AI_PIPELINE:        "ai-pipeline",
+  POLLING:            "polling",
+  NIGHTLY_CLUSTER:    "nightly-cluster",
+  CRM_SYNC:           "crm-sync",
+  GONG_TRANSCRIPT:    "gong-transcript",
+  WORKFLOW_EXECUTION: "workflow-execution",
 } as const
 
 // ─── Job names ────────────────────────────────────────────────────────────────
 
 export const JOB_NAMES = {
-  INGEST_ITEM:     "INGEST_ITEM",
-  PROCESS_ITEM:    "PROCESS_ITEM",
-  POLL_SOURCE:     "POLL_SOURCE",
-  CLUSTER_THEMES:  "CLUSTER_THEMES",
-  SYNC_CRM:        "SYNC_CRM",
+  INGEST_ITEM:      "INGEST_ITEM",
+  PROCESS_ITEM:     "PROCESS_ITEM",
+  POLL_SOURCE:      "POLL_SOURCE",
+  CLUSTER_THEMES:   "CLUSTER_THEMES",
+  SYNC_CRM:         "SYNC_CRM",
+  EXECUTE_WORKFLOW: "EXECUTE_WORKFLOW",
 } as const
 
 // ─── Job payload types ────────────────────────────────────────────────────────
@@ -48,6 +50,14 @@ export interface ClusterThemesPayload {
 export interface SyncCrmPayload {
   connectorId: string
   workspaceId: string
+}
+
+export interface ExecuteWorkflowPayload {
+  workflowId:     string
+  workspaceId:    string
+  feedbackItemId: string
+  /** When set, this is a test run — results are not persisted as a WorkflowRun */
+  testRun?: boolean
 }
 
 // ─── Redis connection ─────────────────────────────────────────────────────────
@@ -82,6 +92,10 @@ export function createCrmSyncQueue(connection: ConnectionOptions) {
 
 export function createGongTranscriptQueue(connection: ConnectionOptions) {
   return new Queue<IngestItemPayload>(QUEUE_NAMES.GONG_TRANSCRIPT, { connection })
+}
+
+export function createWorkflowExecutionQueue(connection: ConnectionOptions) {
+  return new Queue<ExecuteWorkflowPayload>(QUEUE_NAMES.WORKFLOW_EXECUTION, { connection })
 }
 
 export { Worker, Queue }
