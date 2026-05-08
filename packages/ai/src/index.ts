@@ -221,6 +221,54 @@ export function findNearestTheme(
   return { themeId: null, confidence: bestScore }
 }
 
+// ─── Gong transcript extraction (GPT-4o) ─────────────────────────────────────
+
+export interface GongFeedbackSegment {
+  verbatimText: string
+  speakerRole: "customer" | "rep"
+  speakerId: string
+}
+
+const GONG_EXTRACT_SYSTEM = `You are extracting customer feedback from a Gong call transcript.
+
+Given a raw transcript, identify all segments where the CUSTOMER (not the sales/support rep) expresses:
+- Product feedback, complaints, or pain points
+- Feature requests or missing functionality
+- Praise for specific features
+- Workflow problems or confusion
+- Integration needs
+
+For each segment, return the customer's verbatim words (cleaned up, without filler words like "um", "uh").
+Only include segments of at least 15 words that contain genuine product feedback.
+
+Respond with valid JSON only:
+{"segments": [{"speakerId": "customer-name-or-id", "speakerRole": "customer", "verbatimText": "..."}]}`
+
+export async function extractGongTranscript(
+  transcript: string,
+): Promise<GongFeedbackSegment[]> {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: GONG_EXTRACT_SYSTEM },
+      { role: "user", content: transcript.slice(0, 60000) },
+    ],
+    temperature: 0,
+    max_tokens: 2000,
+    response_format: { type: "json_object" },
+  })
+
+  const raw = response.choices[0]?.message.content ?? "{}"
+  try {
+    const parsed = JSON.parse(raw) as { segments?: GongFeedbackSegment[] }
+    return (parsed.segments ?? []).filter(
+      (s) => s.speakerRole === "customer" && s.verbatimText?.trim().length > 0,
+    )
+  } catch {
+    return []
+  }
+}
+
 // ─── Theme naming (GPT-4o) ────────────────────────────────────────────────────
 
 export interface ThemeNameResult {

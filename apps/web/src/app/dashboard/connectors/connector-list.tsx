@@ -1,10 +1,11 @@
 "use client"
 
 import Link from "next/link"
+import { useState } from "react"
 import {
   Slack, MessageCircle, HelpCircle, Star, Headphones,
-  MessageSquare, Building2, GitBranch, CheckCircle2, XCircle, Clock, AlertCircle,
-  Plus,
+  MessageSquare, Building2, GitBranch, CheckCircle2, XCircle,
+  Clock, AlertCircle, Plus, Hash, Ticket, RefreshCw, RotateCcw,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -16,25 +17,47 @@ interface ConnectorListProps {
 }
 
 const AVAILABLE_CONNECTORS = [
-  { type: "SLACK",     label: "Slack",      icon: Slack,         description: "Customer feedback from Slack channels" },
-  { type: "INTERCOM",  label: "Intercom",   icon: MessageCircle, description: "Support conversations and tickets" },
-  { type: "HUBSPOT",   label: "HubSpot",    icon: Building2,     description: "CRM sync — company ARR and tier data" },
-  { type: "LINEAR",    label: "Linear",     icon: GitBranch,     description: "Create and link issues from feedback" },
-  { type: "ZENDESK",   label: "Zendesk",    icon: HelpCircle,    description: "Support tickets and CSAT scores" },
-  { type: "G2",        label: "G2",         icon: Star,          description: "G2 product reviews" },
-  { type: "GONG",      label: "Gong",       icon: Headphones,    description: "Customer calls and transcripts" },
-  { type: "CANNY",     label: "Canny",      icon: MessageSquare, description: "Feature requests and votes" },
+  { type: "SLACK",    label: "Slack",          icon: Slack,         description: "Customer feedback from Slack channels" },
+  { type: "INTERCOM", label: "Intercom",        icon: MessageCircle, description: "Support conversations and tickets" },
+  { type: "ZENDESK",  label: "Zendesk",         icon: HelpCircle,    description: "Support tickets and CSAT scores" },
+  { type: "GONG",     label: "Gong",            icon: Headphones,    description: "Customer calls and transcripts" },
+  { type: "CANNY",    label: "Canny",           icon: MessageSquare, description: "Feature requests and votes" },
+  { type: "G2",       label: "G2",              icon: Star,          description: "G2 product reviews — polled daily" },
+  { type: "HN",       label: "Hacker News",     icon: Hash,          description: "HN mentions — polled hourly via Algolia" },
+  { type: "HUBSPOT",  label: "HubSpot",         icon: Building2,     description: "CRM sync — company ARR and tier data" },
+  { type: "LINEAR",   label: "Linear",          icon: GitBranch,     description: "Create and link issues from feedback" },
+  { type: "JIRA",     label: "Jira",            icon: Ticket,        description: "Create and link Jira issues from feedback" },
 ] as const
 
-const STATUS_ICONS = {
-  ACTIVE:       { icon: CheckCircle2, color: "text-green-500" },
-  ERROR:        { icon: XCircle,      color: "text-red-500" },
-  PAUSED:       { icon: Clock,        color: "text-amber-500" },
-  PENDING_AUTH: { icon: AlertCircle,  color: "text-muted-foreground" },
-}
+const STATUS_CONFIG = {
+  ACTIVE:       { icon: CheckCircle2, color: "text-green-500",           label: "Active" },
+  ERROR:        { icon: XCircle,      color: "text-red-500",             label: "Error" },
+  PAUSED:       { icon: Clock,        color: "text-amber-500",           label: "Paused" },
+  PENDING_AUTH: { icon: AlertCircle,  color: "text-muted-foreground",    label: "Needs auth" },
+} as const
 
-export function ConnectorList({ connectors }: ConnectorListProps) {
+// Polling connectors can be manually triggered
+const POLLING_CONNECTORS = new Set(["G2", "HN"])
+
+// OAuth connectors that can be re-authed via their setup flow
+const OAUTH_CONNECTORS = new Set(["SLACK", "INTERCOM", "HUBSPOT", "LINEAR", "JIRA"])
+
+export function ConnectorList({ workspaceId, connectors }: ConnectorListProps) {
   const connected = new Set(connectors.map((c) => c.type))
+  const [pollingIds, setPollingIds] = useState<Set<string>>(new Set())
+
+  async function triggerPoll(connectorId: string) {
+    setPollingIds((s) => new Set([...s, connectorId]))
+    try {
+      await fetch(`/api/connectors/${connectorId}/poll`, { method: "POST" })
+    } finally {
+      setPollingIds((s) => {
+        const next = new Set(s)
+        next.delete(connectorId)
+        return next
+      })
+    }
+  }
 
   return (
     <div className="max-w-3xl space-y-8">
@@ -48,35 +71,73 @@ export function ConnectorList({ connectors }: ConnectorListProps) {
             {connectors.map((connector) => {
               const avail = AVAILABLE_CONNECTORS.find((a) => a.type === connector.type)
               const Icon = avail?.icon ?? MessageSquare
-              const status = connector.status as keyof typeof STATUS_ICONS
-              const StatusIcon = STATUS_ICONS[status]?.icon ?? AlertCircle
-              const statusColor = STATUS_ICONS[status]?.color ?? "text-muted-foreground"
+              const statusKey = connector.status as keyof typeof STATUS_CONFIG
+              const statusCfg = STATUS_CONFIG[statusKey] ?? STATUS_CONFIG.PENDING_AUTH
+              const StatusIcon = statusCfg.icon
+              const isPolling = pollingIds.has(connector.id)
+              const needsReauth =
+                connector.status === "ERROR" || connector.status === "PENDING_AUTH"
+              const isOAuth = OAUTH_CONNECTORS.has(connector.type)
+              const canPoll = POLLING_CONNECTORS.has(connector.type)
+
               return (
                 <div
                   key={connector.id}
-                  className="flex items-center gap-4 rounded-xl border border-border bg-card px-5 py-4"
+                  className="rounded-xl border border-border bg-card px-5 py-4 space-y-3"
                 >
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
-                    <Icon className="h-4.5 w-4.5" />
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted shrink-0">
+                      <Icon className="h-4.5 w-4.5" />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{connector.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {connector.itemCount.toLocaleString()} items
+                        {connector.lastPolledAt &&
+                          ` · last synced ${formatAge(connector.lastPolledAt)}`}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1.5">
+                        <StatusIcon className={`h-4 w-4 ${statusCfg.color}`} />
+                        <span className="text-xs text-muted-foreground">{statusCfg.label}</span>
+                      </div>
+
+                      {canPoll && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => triggerPoll(connector.id)}
+                          disabled={isPolling}
+                          title="Trigger manual poll"
+                        >
+                          <RefreshCw className={`h-3 w-3 ${isPolling ? "animate-spin" : ""}`} />
+                        </Button>
+                      )}
+
+                      {needsReauth && isOAuth && (
+                        <Link href={`/dashboard/connectors/setup/${connector.type.toLowerCase()}`}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1 border-red-200 text-red-600 hover:bg-red-50"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Re-auth
+                          </Button>
+                        </Link>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{connector.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {connector.itemCount} items
-                      {connector.lastPolledAt &&
-                        ` · last synced ${formatAge(connector.lastPolledAt)}`}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <StatusIcon className={`h-4 w-4 ${statusColor}`} />
-                    <span className="text-xs text-muted-foreground capitalize">
-                      {connector.status.toLowerCase().replace("_", " ")}
-                    </span>
-                  </div>
+
+                  {/* Error message */}
                   {connector.errorMessage && (
-                    <Badge variant="high" className="text-[10px]">
-                      Error
-                    </Badge>
+                    <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                      {connector.errorMessage}
+                    </div>
                   )}
                 </div>
               )
