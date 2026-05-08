@@ -183,7 +183,7 @@ function ThemeRow({
       ) : (
         <div className="flex flex-1 items-center gap-2 min-w-0">
           {theme.isSpiking && (
-            <Flame className="h-3.5 w-3.5 shrink-0 text-amber-500" title="Spiking" />
+            <Flame className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label="Spiking" />
           )}
           <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
