@@ -1,5 +1,8 @@
 import type { FastifyPluginAsync } from "fastify"
 import { createRepo } from "@voxly/db"
+import { MemberRole } from "@voxly/types"
+import { requireRole } from "../plugins/roles"
+import { writeAudit } from "../plugins/audit"
 
 const AVAILABLE_CONNECTOR_TYPES = [
   { type: "SLACK", name: "Slack", description: "Customer messages from Slack channels", auth: "oauth" },
@@ -10,6 +13,7 @@ const AVAILABLE_CONNECTOR_TYPES = [
   { type: "CANNY", name: "Canny", description: "Feature requests and votes", auth: "api_key" },
   { type: "HN", name: "Hacker News", description: "Mentions on Hacker News (public, no auth)", auth: "none" },
   { type: "REDDIT", name: "Reddit", description: "Mentions across subreddits", auth: "oauth" },
+  { type: "SALESFORCE", name: "Salesforce", description: "Cases and Chatter mentions from Salesforce", auth: "oauth" },
 ]
 
 interface CreateConnectorBody {
@@ -49,6 +53,8 @@ const connectors: FastifyPluginAsync = async (fastify) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.MEMBER)) return
+
       const { type, name, accessToken, settings } = request.body
       if (!type || !name) {
         return reply.code(400).send({ error: "type and name are required" })
@@ -62,6 +68,13 @@ const connectors: FastifyPluginAsync = async (fastify) => {
           configJson: { accessToken, settings: settings ?? {} },
           status: accessToken ? "ACTIVE" : "PENDING_AUTH",
         },
+      })
+
+      await writeAudit(fastify.prisma, request, {
+        entityType: "connector",
+        entityId: connector.id,
+        action: "CONNECTOR_CREATED",
+        metadata: { type, name },
       })
 
       return reply.code(201).send(connector)
@@ -78,6 +91,8 @@ const connectors: FastifyPluginAsync = async (fastify) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.MEMBER)) return
+
       const { connectorId } = request.params
       const existing = await fastify.prisma.connector.findUnique({
         where: { id: connectorId },
@@ -91,13 +106,20 @@ const connectors: FastifyPluginAsync = async (fastify) => {
       if (request.body.name !== undefined) updates.name = request.body.name
       if (request.body.enabled !== undefined) updates.enabled = request.body.enabled
       if (request.body.settings !== undefined) {
-        const existing_config = existing.configJson as Record<string, unknown>
-        updates.configJson = { ...existing_config, settings: request.body.settings }
+        const cfg = existing.configJson as Record<string, unknown>
+        updates.configJson = { ...cfg, settings: request.body.settings }
       }
 
       const updated = await fastify.prisma.connector.update({
         where: { id: connectorId },
         data: updates,
+      })
+
+      await writeAudit(fastify.prisma, request, {
+        entityType: "connector",
+        entityId: connectorId,
+        action: "CONNECTOR_UPDATED",
+        metadata: updates,
       })
 
       return updated
@@ -111,12 +133,21 @@ const connectors: FastifyPluginAsync = async (fastify) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.ADMIN)) return
+
       await fastify.prisma.connector.delete({
         where: {
           id: request.params.connectorId,
           workspaceId: request.params.workspaceId,
         },
       })
+
+      await writeAudit(fastify.prisma, request, {
+        entityType: "connector",
+        entityId: request.params.connectorId,
+        action: "CONNECTOR_DELETED",
+      })
+
       return reply.code(204).send()
     }
   )

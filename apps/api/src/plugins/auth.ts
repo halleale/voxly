@@ -6,15 +6,23 @@ declare module "fastify" {
     workspaceId: string
     clerkUserId: string
   }
+  interface FastifyContextConfig {
+    skipAuth?: boolean
+  }
 }
+
+// Routes that bypass JWT auth entirely (API-key or WorkOS-handled)
+const SKIP_AUTH_PREFIXES = ["/health", "/auth/sso", "/api/v1/"]
 
 const authPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.decorateRequest("workspaceId", "")
   fastify.decorateRequest("clerkUserId", "")
 
   fastify.addHook("onRequest", async (request: FastifyRequest, reply) => {
-    // Skip auth on health check
-    if (request.url === "/health") return
+    // Route-level opt-out
+    if (request.routeOptions?.config?.skipAuth) return
+    // Prefix-level opt-out for public/SSO routes
+    if (SKIP_AUTH_PREFIXES.some((p) => request.url.startsWith(p))) return
 
     const token = request.headers.authorization?.replace("Bearer ", "")
     if (!token) {
@@ -26,7 +34,6 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       // In production this is replaced by @clerk/fastify clerkPlugin + getAuth().
       const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString())
       request.clerkUserId = payload.sub ?? ""
-      // Workspace ID passed as a custom claim or header; Clerk org_id maps to workspace
       request.workspaceId =
         (request.headers["x-workspace-id"] as string | undefined) ??
         payload.org_id ??

@@ -1,4 +1,7 @@
 import type { FastifyPluginAsync } from "fastify"
+import { MemberRole } from "@voxly/types"
+import { requireRole } from "../plugins/roles"
+import { writeAudit } from "../plugins/audit"
 
 interface UpdateThemeBody {
   name?: string
@@ -6,7 +9,6 @@ interface UpdateThemeBody {
 }
 
 const themes: FastifyPluginAsync = async (fastify) => {
-  // GET /api/workspaces/:workspaceId/themes
   fastify.get<{ Params: { workspaceId: string } }>(
     "/api/workspaces/:workspaceId/themes",
     async (request, reply) => {
@@ -21,7 +23,6 @@ const themes: FastifyPluginAsync = async (fastify) => {
     }
   )
 
-  // PATCH /api/workspaces/:workspaceId/themes/:themeId — rename
   fastify.patch<{
     Params: { workspaceId: string; themeId: string }
     Body: UpdateThemeBody
@@ -31,6 +32,8 @@ const themes: FastifyPluginAsync = async (fastify) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.MEMBER)) return
+
       const { themeId } = request.params
       const theme = await fastify.prisma.theme.findUnique({
         where: { id: themeId },
@@ -42,17 +45,12 @@ const themes: FastifyPluginAsync = async (fastify) => {
 
       const updated = await fastify.prisma.theme.update({
         where: { id: themeId },
-        data: {
-          name: request.body.name,
-          slug: request.body.slug,
-        },
+        data: { name: request.body.name, slug: request.body.slug },
       })
       return updated
     }
   )
 
-  // POST /api/workspaces/:workspaceId/themes/:themeId/merge
-  // Merge sourceThemeId into this theme
   fastify.post<{
     Params: { workspaceId: string; themeId: string }
     Body: { sourceThemeId: string }
@@ -62,6 +60,8 @@ const themes: FastifyPluginAsync = async (fastify) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.ADMIN)) return
+
       const { themeId } = request.params
       const { sourceThemeId } = request.body
 
@@ -97,15 +97,14 @@ const themes: FastifyPluginAsync = async (fastify) => {
     }
   )
 
-  // DELETE /api/workspaces/:workspaceId/themes/:themeId — archive (unassign items)
   fastify.delete<{ Params: { workspaceId: string; themeId: string } }>(
     "/api/workspaces/:workspaceId/themes/:themeId",
     async (request, reply) => {
       if (request.workspaceId !== request.params.workspaceId) {
         return reply.code(403).send({ error: "Forbidden" })
       }
+      if (await requireRole(request, reply, MemberRole.ADMIN)) return
 
-      // Unassign items from this theme first
       await fastify.prisma.feedbackItem.updateMany({
         where: { themeId: request.params.themeId, workspaceId: request.params.workspaceId },
         data: { themeId: null, themeConfidence: null },

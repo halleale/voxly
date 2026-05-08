@@ -78,6 +78,28 @@ enum WorkflowRunStatus {
   SKIPPED
 }
 
+enum AuditAction {
+  FEEDBACK_STATUS_CHANGED
+  FEEDBACK_ASSIGNED
+  FEEDBACK_ARCHIVED
+  CONNECTOR_CREATED
+  CONNECTOR_UPDATED
+  CONNECTOR_DELETED
+  WORKFLOW_CREATED
+  WORKFLOW_UPDATED
+  WORKFLOW_DELETED
+  WORKFLOW_ACTIVATED
+  TICKET_LINKED
+  INBOX_APPROVED
+  INBOX_REJECTED
+  MEMBER_INVITED
+  MEMBER_ROLE_CHANGED
+  MEMBER_REMOVED
+  WORKSPACE_UPDATED
+  API_KEY_ROTATED
+  THEME_EXPORTED
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model Workspace {
@@ -102,6 +124,7 @@ model Workspace {
   themes        Theme[]
   views         View[]
   workflows     Workflow[]
+  auditLogs     AuditLog[]
 
   @@map("workspaces")
 }
@@ -311,6 +334,25 @@ model Workflow {
 
   @@index([workspaceId])
   @@map("workflows")
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  workspaceId String      @map("workspace_id")
+  actorId     String      @map("actor_id")
+  actorEmail  String?     @map("actor_email")
+  action      AuditAction
+  entityType  String      @map("entity_type")
+  entityId    String?     @map("entity_id")
+  /// Snapshot of relevant fields at the time of the action
+  metadata    Json?
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([workspaceId, entityType])
+  @@map("audit_logs")
 }
 
 model WorkflowRun {

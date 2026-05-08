@@ -3,6 +3,7 @@ import cors from "@fastify/cors"
 import sensible from "@fastify/sensible"
 import authPlugin from "./plugins/auth"
 import dbPlugin from "./plugins/db"
+import rolesPlugin from "./plugins/roles"
 import health from "./routes/health"
 import feedback from "./routes/feedback"
 import connectors from "./routes/connectors"
@@ -10,6 +11,11 @@ import webhooks from "./routes/webhooks"
 import inbox from "./routes/inbox"
 import themes from "./routes/themes"
 import brand from "./routes/brand"
+import workspaces from "./routes/workspaces"
+import ingestion from "./routes/ingestion"
+import sso from "./routes/sso"
+import exportRoutes from "./routes/export"
+import analytics from "./routes/analytics"
 
 export async function buildApp() {
   const app = Fastify({
@@ -26,6 +32,9 @@ export async function buildApp() {
   await app.register(sensible)
   await app.register(dbPlugin)
   await app.register(authPlugin)
+  await app.register(rolesPlugin)
+
+  // Routes
   await app.register(health)
   await app.register(feedback)
   await app.register(connectors)
@@ -33,6 +42,11 @@ export async function buildApp() {
   await app.register(inbox)
   await app.register(themes)
   await app.register(brand)
+  await app.register(workspaces)
+  await app.register(ingestion)
+  await app.register(sso)
+  await app.register(exportRoutes)
+  await app.register(analytics)
 
   app.setErrorHandler((err: unknown, _request, reply) => {
     app.log.error(err)
