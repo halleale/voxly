@@ -9,7 +9,16 @@ import {
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import type { Connector } from "@voxly/db"
+
+interface Connector {
+  id: string
+  type: string
+  name: string
+  status: string
+  itemCount: number
+  lastPolledAt: Date | null
+  errorMessage: string | null
+}
 
 interface ConnectorListProps {
   workspaceId: string
