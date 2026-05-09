@@ -50,10 +50,10 @@ importers:
       fastify-plugin:
         specifier: ^5.0.1
         version: 5.1.0
-    devDependencies:
       tsx:
         specifier: ^4.19.2
         version: 4.21.0
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -215,10 +215,10 @@ importers:
       '@voxly/types':
         specifier: workspace:*
         version: link:../../packages/types
-    devDependencies:
       tsx:
         specifier: ^4.19.2
         version: 4.21.0
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
