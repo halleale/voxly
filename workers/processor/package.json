@@ -4,11 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "build": "tsc --noEmit",
+    "start": "tsx src/index.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "tsx": "^4.19.2",
     "@voxly/ai": "workspace:*",
     "@voxly/db": "workspace:*",
     "@voxly/queue": "workspace:*",
@@ -16,7 +17,6 @@
     "@voxly/connectors": "workspace:*"
   },
   "devDependencies": {
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }

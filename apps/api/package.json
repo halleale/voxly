@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "build": "tsc --noEmit",
+    "start": "tsx src/index.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -14,13 +14,13 @@
     "@fastify/sensible": "^6.0.1",
     "@clerk/fastify": "^2.0.0",
     "fastify-plugin": "^5.0.1",
+    "tsx": "^4.19.2",
     "@voxly/db": "workspace:*",
     "@voxly/types": "workspace:*",
     "@voxly/queue": "workspace:*",
     "@voxly/connectors": "workspace:*"
   },
   "devDependencies": {
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }
