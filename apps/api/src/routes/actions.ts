@@ -174,7 +174,7 @@ const actions: FastifyPluginAsync = async (fastify) => {
           where: { id: itemId, workspaceId: request.workspaceId },
           include: { customer: true },
         }),
-        fastify.prisma.linkedTicket.findUnique({ where: { id: linkedTicketId } }),
+        fastify.prisma.linkedTicket.findFirst({ where: { id: linkedTicketId, workspaceId: request.workspaceId } }),
         fastify.prisma.connector.findFirst({
           where: { workspaceId: request.workspaceId, type: "LINEAR", enabled: true },
         }),

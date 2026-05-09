@@ -42,6 +42,9 @@ export function verifyZendeskSignature(
   timestamp: string,
   signature: string,
 ): boolean {
+  const tsSeconds = Number(timestamp)
+  if (isNaN(tsSeconds) || Math.abs(Date.now() / 1000 - tsSeconds) > 300) return false
+
   const message = timestamp + rawBody.toString("utf8")
   const expected = createHmac("sha256", signingSecret)
     .update(message)

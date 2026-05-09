@@ -9,6 +9,13 @@ declare module "fastify" {
 }
 
 const authPlugin: FastifyPluginAsync = async (fastify) => {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "auth plugin: unverified JWT decode must not run in production. " +
+      "Replace with @clerk/fastify clerkPlugin + getAuth() before deploying.",
+    )
+  }
+
   fastify.decorateRequest("workspaceId", "")
   fastify.decorateRequest("clerkUserId", "")
 
@@ -22,11 +29,10 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     try {
-      // Decode the JWT without verification for workspace extraction in dev.
-      // In production this is replaced by @clerk/fastify clerkPlugin + getAuth().
+      // Dev-only: decode JWT without signature verification.
+      // In production this plugin must be replaced by @clerk/fastify + getAuth().
       const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString())
       request.clerkUserId = payload.sub ?? ""
-      // Workspace ID passed as a custom claim or header; Clerk org_id maps to workspace
       request.workspaceId =
         (request.headers["x-workspace-id"] as string | undefined) ??
         payload.org_id ??

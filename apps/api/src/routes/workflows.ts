@@ -119,10 +119,17 @@ const workflows: FastifyPluginAsync = async (fastify) => {
       const { feedbackItemId } = request.body
       if (!feedbackItemId) return reply.code(400).send({ error: "feedbackItemId required" })
 
-      const wf = await prisma.workflow.findFirst({
-        where: { id: request.params.workflowId, workspaceId: request.workspaceId },
-      })
+      const [wf, feedbackItem] = await Promise.all([
+        prisma.workflow.findFirst({
+          where: { id: request.params.workflowId, workspaceId: request.workspaceId },
+        }),
+        prisma.feedbackItem.findFirst({
+          where: { id: feedbackItemId, workspaceId: request.workspaceId },
+          select: { id: true },
+        }),
+      ])
       if (!wf) return reply.code(404).send({ error: "Not found", code: "NOT_FOUND" })
+      if (!feedbackItem) return reply.code(404).send({ error: "Feedback item not found", code: "NOT_FOUND" })
 
       const job = await wfQueue.add("EXECUTE_WORKFLOW", {
         workflowId: wf.id,
@@ -142,7 +149,7 @@ const workflows: FastifyPluginAsync = async (fastify) => {
         return reply.code(403).send({ error: "Forbidden", code: "FORBIDDEN" })
       }
       const runs = await prisma.workflowRun.findMany({
-        where: { workflowId: request.params.workflowId },
+        where: { workflow: { id: request.params.workflowId, workspaceId: request.workspaceId } },
         orderBy: { startedAt: "desc" },
         take: 50,
       })

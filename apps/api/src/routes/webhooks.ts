@@ -137,6 +137,9 @@ const webhooks: FastifyPluginAsync = async (fastify) => {
         if (!valid) {
           return reply.code(401).send({ error: "Invalid Gong signature" })
         }
+      } else {
+        // Unknown connector type — fail closed rather than accepting unsigned payloads
+        return reply.code(401).send({ error: "Signature verification not supported for this connector type" })
       }
 
       // ── Parse body and enqueue ──────────────────────────────────────────────

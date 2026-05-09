@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
       status:      "ACTIVE",
       configJson:  {
         accessToken,
-        webhookSecret: process.env.INTERCOM_CLIENT_SECRET ?? "",
+        webhookSecret: process.env.INTERCOM_WEBHOOK_SECRET ?? "",
         settings:      {},
       },
     },
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       status:     "ACTIVE",
       configJson: {
         accessToken,
-        webhookSecret: process.env.INTERCOM_CLIENT_SECRET ?? "",
+        webhookSecret: process.env.INTERCOM_WEBHOOK_SECRET ?? "",
         settings:      {},
       },
     },

@@ -28,12 +28,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No workspace found" }, { status: 400 })
   }
 
-  const connector = await prisma.connector.create({
-    data: {
+  const gongId = `${member.workspaceId}:GONG`
+  const connector = await prisma.connector.upsert({
+    where: { id: gongId },
+    create: {
+      id:          gongId,
       workspaceId: member.workspaceId,
       type:        "GONG",
       name:        "Gong",
       status:      "ACTIVE",
+      configJson: {
+        accessToken:   body.accessToken,
+        webhookSecret: body.webhookSecret,
+      },
+    },
+    update: {
+      status:     "ACTIVE",
       configJson: {
         accessToken:   body.accessToken,
         webhookSecret: body.webhookSecret,

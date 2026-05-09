@@ -24,6 +24,23 @@ const feedback: FastifyPluginAsync = async (fastify) => {
       const pageSize = Math.min(100, Math.max(1, Number(request.query.pageSize ?? 50)))
       const skip = (page - 1) * pageSize
 
+      const VALID_STATUSES = new Set(["NEW", "ASSIGNED", "RESOLVED", "ARCHIVED"])
+      const VALID_SEVERITIES = new Set(["HIGH", "MEDIUM", "LOW"])
+      const VALID_SOURCE_TYPES = new Set([
+        "SLACK", "INTERCOM", "ZENDESK", "G2", "TRUSTRADIUS", "GONG",
+        "CANNY", "HN", "REDDIT", "HUBSPOT", "SALESFORCE", "LINEAR", "JIRA", "API",
+      ])
+
+      if (request.query.status && !VALID_STATUSES.has(request.query.status)) {
+        return reply.code(400).send({ error: `Invalid status value: ${request.query.status}`, code: "VALIDATION" })
+      }
+      if (request.query.severity && !VALID_SEVERITIES.has(request.query.severity)) {
+        return reply.code(400).send({ error: `Invalid severity value: ${request.query.severity}`, code: "VALIDATION" })
+      }
+      if (request.query.sourceType && !VALID_SOURCE_TYPES.has(request.query.sourceType)) {
+        return reply.code(400).send({ error: `Invalid sourceType value: ${request.query.sourceType}`, code: "VALIDATION" })
+      }
+
       const where: Record<string, unknown> = {}
       if (request.query.status) where["status"] = request.query.status
       if (request.query.themeId) where["themeId"] = request.query.themeId

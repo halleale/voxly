@@ -33,14 +33,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No workspace found" }, { status: 400 })
   }
 
-  await prisma.connector.create({
-    data: {
+  const zendeskId = `${member.workspaceId}:ZENDESK`
+  await prisma.connector.upsert({
+    where: { id: zendeskId },
+    create: {
+      id:          zendeskId,
       workspaceId: member.workspaceId,
       type:        "ZENDESK",
       name:        `Zendesk — ${body.subdomain}`,
       status:      "ACTIVE",
       configJson: {
-        accessToken:  body.apiToken,
+        accessToken:   body.apiToken,
+        webhookSecret: body.webhookSecret,
+        settings: {
+          subdomain:  body.subdomain,
+          adminEmail: body.adminEmail,
+        },
+      },
+    },
+    update: {
+      name:   `Zendesk — ${body.subdomain}`,
+      status: "ACTIVE",
+      configJson: {
+        accessToken:   body.apiToken,
         webhookSecret: body.webhookSecret,
         settings: {
           subdomain:  body.subdomain,

@@ -45,8 +45,11 @@ export async function POST(
 
   const redis = createRedisConnection()
   const aiQueue = createAiPipelineQueue(redis)
-  await aiQueue.add(JOB_NAMES.PROCESS_ITEM, { ingestionQueueId: item.id })
-  await redis.quit()
+  try {
+    await aiQueue.add(JOB_NAMES.PROCESS_ITEM, { ingestionQueueId: item.id })
+  } finally {
+    await redis.quit()
+  }
 
   return NextResponse.json({ ok: true })
 }

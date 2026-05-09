@@ -161,7 +161,7 @@ export async function generateSummary(
   ctx: SummaryContext,
 ): Promise<string> {
   const response = await openai.chat.completions.create({
-    model: "gpt-4o",
+    model: "gpt-4o-mini",
     messages: [
       { role: "system", content: buildSummarySystem(ctx) },
       { role: "user", content: verbatimText.slice(0, 6000) },

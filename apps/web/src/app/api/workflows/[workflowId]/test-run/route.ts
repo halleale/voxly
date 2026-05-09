@@ -24,23 +24,32 @@ export async function POST(
   })
   if (!member) return NextResponse.json({ error: "Workspace not found" }, { status: 404 })
 
-  const wf = await prisma.workflow.findFirst({
-    where: { id: params.workflowId, workspaceId: member.workspaceId },
-  })
-  if (!wf) return NextResponse.json({ error: "Not found" }, { status: 404 })
-
   const body = (await req.json()) as { feedbackItemId?: string }
   if (!body.feedbackItemId) return NextResponse.json({ error: "feedbackItemId required" }, { status: 400 })
 
+  const [wf, feedbackItem] = await Promise.all([
+    prisma.workflow.findFirst({
+      where: { id: params.workflowId, workspaceId: member.workspaceId },
+    }),
+    prisma.feedbackItem.findFirst({
+      where: { id: body.feedbackItemId, workspaceId: member.workspaceId },
+      select: { id: true },
+    }),
+  ])
+  if (!wf) return NextResponse.json({ error: "Not found" }, { status: 404 })
+  if (!feedbackItem) return NextResponse.json({ error: "Feedback item not found" }, { status: 404 })
+
   const redis = createRedisConnection()
   const wfQueue = createWorkflowExecutionQueue(redis)
-  const job = await wfQueue.add("EXECUTE_WORKFLOW", {
-    workflowId: wf.id,
-    workspaceId: member.workspaceId,
-    feedbackItemId: body.feedbackItemId,
-    testRun: true,
-  })
-  await redis.quit()
-
-  return NextResponse.json({ jobId: job.id })
+  try {
+    const job = await wfQueue.add("EXECUTE_WORKFLOW", {
+      workflowId: wf.id,
+      workspaceId: member.workspaceId,
+      feedbackItemId: body.feedbackItemId,
+      testRun: true,
+    })
+    return NextResponse.json({ jobId: job.id })
+  } finally {
+    await redis.quit()
+  }
 }

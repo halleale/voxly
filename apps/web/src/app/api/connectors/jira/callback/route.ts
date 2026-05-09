@@ -69,13 +69,29 @@ export async function POST(request: NextRequest) {
 
   const firstSite = sites[0]
 
-  await prisma.connector.create({
-    data: {
+  const jiraId = `${member.workspaceId}:JIRA`
+  await prisma.connector.upsert({
+    where: { id: jiraId },
+    create: {
+      id:          jiraId,
       workspaceId: member.workspaceId,
       type:        "JIRA",
       name:        firstSite ? `Jira — ${firstSite.name}` : "Jira",
       status:      "ACTIVE",
       configJson:  {
+        accessToken:  tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        settings: {
+          cloudId:   firstSite?.id,
+          siteUrl:   firstSite?.url,
+          siteName:  firstSite?.name,
+        },
+      },
+    },
+    update: {
+      name:       firstSite ? `Jira — ${firstSite.name}` : "Jira",
+      status:     "ACTIVE",
+      configJson: {
         accessToken:  tokens.access_token,
         refreshToken: tokens.refresh_token,
         settings: {

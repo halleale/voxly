@@ -98,14 +98,17 @@ export async function POST(req: NextRequest) {
   const { createRedisConnection, createCrmSyncQueue, JOB_NAMES } = await import("@voxly/queue")
   const redis = createRedisConnection()
   const queue = createCrmSyncQueue(redis)
-  const connector = await prisma.connector.findFirst({
-    where: { workspaceId: member.workspaceId, type: "HUBSPOT" },
-    select: { id: true },
-  })
-  if (connector) {
-    await queue.add(JOB_NAMES.SYNC_CRM, { connectorId: connector.id, workspaceId: member.workspaceId })
+  try {
+    const connector = await prisma.connector.findFirst({
+      where: { workspaceId: member.workspaceId, type: "HUBSPOT" },
+      select: { id: true },
+    })
+    if (connector) {
+      await queue.add(JOB_NAMES.SYNC_CRM, { connectorId: connector.id, workspaceId: member.workspaceId })
+    }
+  } finally {
+    await redis.quit()
   }
-  await redis.quit()
 
   return NextResponse.json({ ok: true })
 }

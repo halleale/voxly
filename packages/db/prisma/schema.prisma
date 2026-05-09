@@ -84,14 +84,16 @@ enum WorkflowRunStatus {
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model Workspace {
-  id         String   @id @default(cuid())
-  name       String
-  slug       String   @unique
-  plan       String   @default("starter")
+  id                    String   @id @default(cuid())
+  name                  String
+  slug                  String   @unique
+  plan                  String   @default("starter")
+  feedbackQuota         Int      @default(300) @map("feedback_quota")
+  feedbackUsedThisMonth Int      @default(0)   @map("feedback_used_this_month")
   /// Hashed API key for the public ingestion endpoint (Chunk 10)
-  apiKeyHash String?  @map("api_key_hash")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  apiKeyHash            String?  @map("api_key_hash")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   members       WorkspaceMember[]
   connectors    Connector[]
@@ -203,6 +205,7 @@ model FeedbackItem {
   linkedTickets LinkedTicket[]
   workflowRuns  WorkflowRun[]
 
+  @@unique([connectorId, externalId])
   @@index([workspaceId, ingestedAt(sort: Desc)])
   @@index([workspaceId, themeId])
   @@index([workspaceId, status])

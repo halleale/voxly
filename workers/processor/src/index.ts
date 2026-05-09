@@ -309,6 +309,22 @@ async function runAiPipeline(
     return
   }
 
+  // Quota gate: atomically increment counter; skip if workspace is at limit
+  const quotaResult = await prisma.$executeRaw`
+    UPDATE workspaces
+    SET feedback_used_this_month = feedback_used_this_month + 1
+    WHERE id = ${workspaceId}
+      AND feedback_used_this_month < feedback_quota
+  `
+  if (quotaResult === 0) {
+    await prisma.ingestionQueue.update({
+      where: { id: queueItem.id },
+      data: { status: "REJECTED", rejectReason: "quota_exceeded", processedAt: new Date() },
+    })
+    job.log(`Workspace ${workspaceId} has reached its monthly feedback quota — skipping item`)
+    return
+  }
+
   const authorEmail = raw.authorEmail as string | undefined
   const emailDomain = authorEmail ? (authorEmail.split("@")[1] ?? null) : null
   const customer = emailDomain
@@ -1101,6 +1117,34 @@ async function executeWorkflowGraph(
         } else if (action === "webhook") {
           const url = cfg.url as string | undefined
           if (url) {
+            // SSRF guard: allow only HTTPS to public addresses
+            let parsedUrl: URL
+            try {
+              parsedUrl = new URL(url)
+            } catch {
+              steps[node.id] = { nodeType: "action", result: "fail", detail: "invalid webhook url" }
+              continue
+            }
+            if (parsedUrl.protocol !== "https:") {
+              steps[node.id] = { nodeType: "action", result: "fail", detail: "webhook url must use https" }
+              continue
+            }
+            const hostname = parsedUrl.hostname.toLowerCase()
+            const blockedPatterns = [
+              /^localhost$/,
+              /^127\./,
+              /^10\./,
+              /^172\.(1[6-9]|2\d|3[01])\./,
+              /^192\.168\./,
+              /^169\.254\./,
+              /^::1$/,
+              /^fc00:/,
+              /^fe80:/,
+            ]
+            if (blockedPatterns.some((re) => re.test(hostname))) {
+              steps[node.id] = { nodeType: "action", result: "fail", detail: "webhook url targets a private/internal address" }
+              continue
+            }
             const res = await fetch(url, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
