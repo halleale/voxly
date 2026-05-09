@@ -134,6 +134,9 @@ importers:
 
   packages/connectors:
     dependencies:
+      '@voxly/ai':
+        specifier: workspace:*
+        version: link:../ai
       '@voxly/types':
         specifier: workspace:*
         version: link:../types
@@ -150,10 +153,10 @@ importers:
       '@voxly/types':
         specifier: workspace:*
         version: link:../types
-    devDependencies:
       prisma:
         specifier: ^6.2.1
         version: 6.19.3(typescript@5.9.3)
+    devDependencies:
       tsx:
         specifier: ^4.19.2
         version: 4.21.0
